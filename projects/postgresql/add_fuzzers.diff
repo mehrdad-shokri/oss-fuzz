@@ -1,38 +1,69 @@
-diff --git a/src/backend/Makefile b/src/backend/Makefile
-index 9706a95848..4312c346a4 100644
---- a/src/backend/Makefile
-+++ b/src/backend/Makefile
-@@ -43,6 +43,8 @@ OBJS = \
- 	$(top_builddir)/src/common/libpgcommon_srv.a \
- 	$(top_builddir)/src/port/libpgport_srv.a
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index 825fd55107..f3e2dbbf20 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -105,6 +105,10 @@ int			PostAuthDelay = 0;
+ /* Time between checks that the client is still connected. */
+ int			client_connection_check_interval = 0;
  
-+OBJS_WITHOUT_MAIN = $(filter-out main/objfiles.txt, $(OBJS))
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++bool        fuzzer_first_run = true;
++#endif
 +
- # We put libpgport and libpgcommon into OBJS, so remove it from LIBS; also add
- # libldap and ICU
- LIBS := $(filter-out -lpgport -lpgcommon, $(LIBS)) $(LDAP_LIBS_BE) $(ICU_LIBS)
-@@ -56,7 +58,10 @@ endif
+ /* ----------------
+  *		private typedefs etc
+  * ----------------
+@@ -454,10 +458,15 @@ ReadCommand(StringInfo inBuf)
+ {
+ 	int			result;
  
- ##########################################################################
- 
--all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
-+all: submake-libpgport submake-catalog-headers submake-utils-headers postgres fuzzer $(POSTGRES_IMP)
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++    result = SocketBackend(inBuf);
++#else
 +
-+fuzzer: fuzzer/simple_query_fuzzer \
-+	fuzzer/json_parser_fuzzer
+ 	if (whereToSendOutput == DestRemote)
+ 		result = SocketBackend(inBuf);
+ 	else
+ 		result = InteractiveBackend(inBuf);
++#endif
+ 	return result;
+ }
  
- ifneq ($(PORTNAME), cygwin)
- ifneq ($(PORTNAME), win32)
-@@ -65,6 +70,12 @@ ifneq ($(PORTNAME), aix)
- postgres: $(OBJS)
- 	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) $(LIBS) -o $@
+@@ -3910,6 +3919,11 @@ PostgresMain(int argc, char *argv[],
+ 	bool		idle_in_transaction_timeout_enabled = false;
+ 	bool		idle_session_timeout_enabled = false;
  
-+fuzzer/json_parser_fuzzer: fuzzer/json_parser_fuzzer.o $(OBJS_WITHOUT_MAIN)
-+	$(CXX) $(CFLAGS) $(call expand_subsys,$^) -o $@ $(LIB_FUZZING_ENGINE)
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++        if(fuzzer_first_run)
++                {
++#endif /* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
 +
-+fuzzer/simple_query_fuzzer: fuzzer/simple_query_fuzzer.o $(OBJS_WITHOUT_MAIN)
-+	$(CXX) $(CFLAGS) $(call expand_subsys,$^) -o $@ $(LIB_FUZZING_ENGINE)
+ 	/* Initialize startup process environment if necessary. */
+ 	if (!IsUnderPostmaster)
+ 		InitStandaloneProcess(argv[0]);
+@@ -4271,6 +4285,11 @@ PostgresMain(int argc, char *argv[],
+ 	if (!ignore_till_sync)
+ 		send_ready_for_query = true;	/* initially, or after error */
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++        fuzzer_first_run=false;
++            }
++#endif /* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
 +
- endif
- endif
- endif
+ 	/*
+ 	 * Non-error queries loop here.
+ 	 */
+diff --git a/src/backend/utils/error/elog.c b/src/backend/utils/error/elog.c
+index a1ebe06d5b..dfa94013a0 100644
+--- a/src/backend/utils/error/elog.c
++++ b/src/backend/utils/error/elog.c
+@@ -594,7 +594,9 @@ errfinish(const char *filename, int lineno, const char *funcname)
+ 	}
+ 
+ 	/* Emit the message to the right places */
++#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+ 	EmitErrorReport();
++#endif
+ 
+ 	/* Now free up subsidiary data attached to stack entry, and release it */
+ 	if (edata->message)

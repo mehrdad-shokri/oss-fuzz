@@ -28,10 +28,17 @@ export ONIG_LIBS="-L$PWD/oniguruma/src/.libs -l:libonig.a"
 export CFLAGS="$CFLAGS -fno-sanitize=object-size"
 export CXXFLAGS="$CXXFLAGS -fno-sanitize=object-size"
 
+# Make sure the right assembly files are picked
+BUILD_FLAG=""
+if [ "$ARCHITECTURE" = "i386" ]; then
+    BUILD_FLAG="--build=i686-pc-linux-gnu"
+fi
+
 # build project
 ./buildconf
-./configure \
+./configure $BUILD_FLAG \
     --disable-all \
+    --enable-debug-assertions \
     --enable-option-checking=fatal \
     --enable-fuzzer \
     --enable-exif \
@@ -55,7 +62,8 @@ php-fuzz-exif
 php-fuzz-mbstring
 php-fuzz-unserialize
 php-fuzz-unserializehash
-php-fuzz-parser"
+php-fuzz-parser
+php-fuzz-execute"
 for fuzzerName in $FUZZERS; do
 	cp sapi/fuzzer/$fuzzerName $OUT/
 done

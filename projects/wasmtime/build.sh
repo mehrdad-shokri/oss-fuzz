@@ -22,13 +22,26 @@ build() {
   shift
   fuzzer_prefix=$1
   shift
+  fuzz_targets=$1
+  shift
   PROJECT_DIR=$SRC/$project
+
+  # ensure we get absolute paths for the coverage report
+  cd $PROJECT_DIR
+  crate_src_abspath=`cargo metadata --no-deps --format-version 1 | jq -r '.workspace_root'`
+  while read i; do
+    export RUSTFLAGS="$RUSTFLAGS --remap-path-prefix $i=$crate_src_abspath/$i"
+  done <<< "$(find . -name "*.rs" | cut -d/ -f2 | uniq)"
 
   cd $PROJECT_DIR/fuzz && cargo fuzz build -O --debug-assertions "$@"
 
   FUZZ_TARGET_OUTPUT_DIR=$PROJECT_DIR/target/x86_64-unknown-linux-gnu/release
 
-  for f in $PROJECT_DIR/fuzz/fuzz_targets/*.rs; do
+  if [ "x$fuzz_targets" = "x" ]; then
+      fuzz_targets=$PROJECT_DIR/fuzz/fuzz_targets/*.rs
+  fi
+
+  for f in $fuzz_targets; do
       src_name=$(basename ${f%.*})
       dst_name=$fuzzer_prefix$src_name
       cp $FUZZ_TARGET_OUTPUT_DIR/$src_name $OUT/$dst_name
@@ -43,8 +56,8 @@ build() {
   done
 }
 
-# Build with all features to enable the binaryen-using fuzz targets, and
-# the peepmatic fuzz targets.
-build wasmtime "" --all-features
+# Build with peepmatic in order to enable the related fuzz targets.
+build wasmtime "" "" --features "peepmatic-fuzzing experimental_x64"
 
-build wasm-tools wasm-tools-
+build wasm-tools wasm-tools- ""
+build regalloc.rs regalloc- bt bt

@@ -15,20 +15,9 @@
 #
 ################################################################################
 
-function compile_fuzzer {
-  path=$1
-  function=$2
-  fuzzer=$3
+compile_go_fuzzer github.com/google/gonids FuzzParseRule fuzz_parserule
 
-  # Compile and instrument all Go files relevant to this fuzz target.
-  go-fuzz -func $function -o $fuzzer.a $path
-
-  # Link Go code ($fuzzer.a) with fuzzing engine to produce fuzz target binary.
-  $CXX $CXXFLAGS $LIB_FUZZING_ENGINE $fuzzer.a -o $OUT/$fuzzer
-}
-
-compile_fuzzer github.com/google/gonids FuzzParseRule fuzz_parserule
-
+cd $SRC
 unzip emerging.rules.zip
 cd rules
 i=0
@@ -37,4 +26,4 @@ mkdir corpus
 set +x
 cat *.rules | while read l; do echo $l > corpus/$i.rule; i=$((i+1)); done
 set -x
-zip -r $OUT/fuzz_parserule_seed_corpus.zip corpus
+zip -q -r $OUT/fuzz_parserule_seed_corpus.zip corpus
