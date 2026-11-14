@@ -14,13 +14,14 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
+
 RUN apt-get update && \
     apt-get install -y make autoconf automake libtool g++ curl cmake sqlite3 pkg-config
 
 RUN git clone --depth 1 https://github.com/OSGeo/gdal gdal
 
-RUN cp gdal/gdal/fuzzers/build.sh $SRC/
+RUN cp gdal/fuzzers/build.sh $SRC/
 
 WORKDIR gdal
 

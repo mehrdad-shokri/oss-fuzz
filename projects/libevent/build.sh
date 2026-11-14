@@ -16,17 +16,53 @@
 ################################################################################
 
 # build project
-sh autogen.sh
-./configure --disable-openssl
-make -j$(nproc) clean
-make -j$(nproc) all
+mkdir build
+cd build
+cmake -DEVENT__DISABLE_MBEDTLS=ON \
+      -DEVENT__DISABLE_OPENSSL=ON \
+      -DEVENT__LIBRARY_TYPE=STATIC \
+      -DEVENT__DISABLE_TESTS=ON \
+      -DEVENT__DISABLE_SAMPLES=ON \
+      ../
+make -j$(nproc)
 make install
 
 # build fuzzer
 for fuzzers in $(find $SRC -name '*_fuzzer.cc'); do
   fuzz_basename=$(basename -s .cc $fuzzers)
-  $CXX $CXXFLAGS -std=c++11 -Iinclude \
-      $fuzzers $LIB_FUZZING_ENGINE ./.libs/libevent.a ./.libs/libevent_core.a  \
-      ./.libs/libevent_pthreads.a ./.libs/libevent_extra.a \
+  $CXX $CXXFLAGS -std=c++17 -I../ -Iinclude \
+      $fuzzers $LIB_FUZZING_ENGINE ./lib/libevent.a ./lib/libevent_core.a  \
+      ./lib/libevent_pthreads.a ./lib/libevent_extra.a \
       -o $OUT/$fuzz_basename
 done
+
+if [[ "$FUZZING_ENGINE" == "honggfuzz" ]]
+then
+  fuzz_basename=$(basename -s .cc $fuzzers)
+  $CC $CFLAGS $LIB_HFND "$HFND_CFLAGS" -Iinclude \
+      $SRC/fuzz_request_cb.c $LIB_FUZZING_ENGINE ./lib/libevent.a ./lib/libevent_core.a  \
+      ./lib/libevent_pthreads.a ./lib/libevent_extra.a \
+      -o $OUT/fuzz_request
+fi
+
+# The dictionary is not compatible with AFL
+if [ "$FUZZING_ENGINE" != 'afl' ]; then
+  cp $SRC/fuzzing/dictionaries/http.dict $OUT/http_fuzzer.dict
+  cp $SRC/fuzzing/dictionaries/http.dict $OUT/http_message_fuzzer.dict
+  cp $SRC/ws_fuzzer.dict $OUT/ws_fuzzer.dict
+fi
+
+# Dictionary for the evdns harnesses.
+cp $SRC/evdns_fuzzer.dict $OUT/evdns_client_fuzzer.dict
+cp $SRC/evdns_fuzzer.dict $OUT/evdns_server_fuzzer.dict
+
+# Build the project tests for Chronos
+mkdir -p $SRC/libevent/build-tests
+cd $SRC/libevent/build-tests
+cmake -DEVENT__DISABLE_TESTS=OFF \
+      -DEVENT__DISABLE_MBEDTLS=ON \
+      -DEVENT__DISABLE_OPENSSL=ON \
+      -DEVENT__LIBRARY_TYPE=STATIC \
+      -DEVENT__DISABLE_SAMPLES=ON \
+      ..
+make -j$(nproc)

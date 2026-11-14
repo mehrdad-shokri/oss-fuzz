@@ -7,12 +7,12 @@ fuzzing_engines:
   - afl
   - libfuzzer
   - honggfuzz
-  - dataflow
 sanitizers:
   - address
   - undefined
-  - memory
-  - dataflow
+# Disabled MSAN because of https://github.com/google/oss-fuzz/issues/6294
+#  - memory
 architectures:
   - x86_64
   - i386
+main_repo: "https://w1.fi/hostap.git"

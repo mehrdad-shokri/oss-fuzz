@@ -2,7 +2,7 @@
 layout: default
 title: Bug disclosure guidelines
 parent: Getting started
-nav_order: 4
+nav_order: 3
 permalink: /getting-started/bug-disclosure-guidelines/
 ---
 
@@ -12,8 +12,8 @@ Following [Google's standard disclosure policy](https://googleprojectzero.blogsp
 OSS-Fuzz will adhere to following disclosure principles:
 
   - **Deadline**. After notifying project authors, we will open reported
-    issues to the public in 90 days, or 30 days after the fix is released
-    (whichever comes earlier).
+    issues to the public in 90 days, or after the fix is released (whichever
+    comes earlier).
   - **Weekends and holidays**. If a deadline is due to expire on a weekend,
     the deadline will be moved to the next normal work day.
   - **Grace period**. We have a 14-day grace period. If a 90-day deadline

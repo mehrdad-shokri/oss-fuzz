@@ -13,29 +13,20 @@
 # limitations under the License.
 #
 ################################################################################
-
 FROM gcr.io/oss-fuzz-base/base-builder
-# Install the build dependencies
 
-# install the minimum
+RUN apt-get update && \
+   apt-get install -y make autoconf automake libtool build-essential pkg-config bison flex patchelf nasm gperf
 
-RUN sed -i '/^#\sdeb-src /s/^#//' "/etc/apt/sources.list" && \
-   apt-get update && \
-   apt-get install -y build-essential pkg-config bison flex gettext \
-    libffi-dev liblzma-dev libvorbis-dev libtheora-dev libogg-dev zlib1g-dev \
-    ninja-build python3-pip && \
-   pip3 install meson==0.53.2
+RUN pip3 install --disable-pip-version-check --no-cache-dir \
+        pip==25.1.1
+RUN pip3 install --disable-pip-version-check --no-cache-dir \
+        corpus-replicator \
+        meson==1.8.2 \
+        ninja==1.11.1.4
 
-ADD https://ftp.gnome.org/pub/gnome/sources/glib/2.64/glib-2.64.2.tar.xz $SRC
-
-# Checkout all development repositories
-#RUN for i in orc  gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav; do git clone --depth 1 --recursive https://anongit.freedesktop.org/git/gstreamer/$i $i; done  
-RUN \
-  git clone --depth 1 --recursive https://gitlab.freedesktop.org/gstreamer/gstreamer.git gstreamer && \
-  git clone --depth 1 --recursive https://gitlab.freedesktop.org/gstreamer/gst-plugins-base.git gst-plugins-base && \
-  git clone --depth 1 --recursive https://gitlab.freedesktop.org/gstreamer/gst-ci.git gst-ci
-
-ADD https://people.freedesktop.org/~bilboed/gst-discoverer_seed_corpus.zip $SRC
+# Checkout repository
+RUN git clone --depth 1 --recursive https://gitlab.freedesktop.org/gstreamer/gstreamer.git gstreamer
 
 WORKDIR gstreamer
-COPY build.sh $SRC/
+COPY build.sh generate_seeds.py $SRC/

@@ -14,7 +14,7 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 
 # Install packages we need to build dependencies
 RUN apt-get update && \
@@ -28,7 +28,9 @@ RUN apt-get update && \
     gcc \
     g++ \
     python \
-    python-dev
+    python-dev \
+    cmake \
+    ninja-build
 
 # Install and build boost from source so we can have it use libc++
 RUN wget https://sourceforge.net/projects/boost/files/boost/1.70.0/boost_1_70_0.tar.gz && \
@@ -96,6 +98,13 @@ RUN wget https://github.com/facebook/zstd/releases/download/v1.4.2/zstd-1.4.2.ta
     cd .. && \
     rm -rf zstd-1.4.2
 
+# Get double conversion
+RUN git clone --single-branch https://github.com/google/double-conversion.git double-conversion && \
+    cd double-conversion/double-conversion && \
+    cmake -GNinja ../ && \
+    ninja && \
+    ninja install
+
 # Build and install `fmt` needed by folly
 RUN wget https://github.com/fmtlib/fmt/archive/6.0.0.tar.gz && \
     tar xzf 6.0.0.tar.gz && \
@@ -110,6 +119,24 @@ RUN wget https://github.com/fmtlib/fmt/archive/6.0.0.tar.gz && \
     sudo make install && \
     cd ../.. && \
     rm -rf fmt-6.0.0
+    
+# Build and install `gperf` (>= 3.1)
+RUN wget http://ftp.gnu.org/pub/gnu/gperf/gperf-3.1.tar.gz && \
+    rm -rf gperf-3.1 | true && \
+    tar xzvf gperf-3.1.tar.gz && \
+    cd gperf-3.1 && \
+    export CC=gcc && \
+    export CXX=g++ && \
+    export CXXFLAGS="" && \
+    export CFLAGS_TMP="$CFLAGS" && \
+    unset CFLAGS && \
+    ./configure && \
+    make -j1 V=s && \
+    sudo make install && \
+    export CFLAGS="$CFLAGS_TMP" && \
+    unset CFLAGS_TMP && \
+    cd .. && \
+    rm -rf gperf-3.1
 
 # Replicate `install-dependencies` from the proxygen `build.sh` script
 RUN apt-get install -y \
@@ -122,7 +149,6 @@ RUN apt-get install -y \
     pkg-config \
     libssl-dev \
     libcap-dev \
-    gperf \
     libevent-dev \
     libtool \
     libjemalloc-dev \
@@ -132,7 +158,6 @@ RUN apt-get install -y \
     zlib1g-dev \
     binutils-dev \
     libsodium-dev \
-    libdouble-conversion-dev \
     libunwind8-dev
 
 # Install patchelf so we can fix path to libunwind

@@ -16,9 +16,9 @@
 ################################################################################
 
 #add next branch
-for branch in v4 next
+for branch in v5 next
 do
-    cd capstone$branch
+    cd $SRC/capstone$branch
     # build project
     mkdir build
     # does not seem to work in source directory
@@ -32,11 +32,12 @@ do
     sed -i -e 's/#print/print/' capstone/__init__.py
     (
     export CFLAGS=""
-    python setup.py install
+    export AFL_NOOPT=1
+    python3 -m pip install .
     )
     cd $SRC/capstone$branch/suite
     mkdir fuzz/corpus
-    find MC/ -name *.cs | ./test_corpus.py
+    find MC/ -name *.cs | ./test_corpus3.py
     cd fuzz
     zip -r fuzz_disasm"$branch"_seed_corpus.zip corpus/
     cp fuzz_disasm"$branch"_seed_corpus.zip $OUT/
@@ -52,5 +53,5 @@ do
     fi
     $CXX $CXXFLAGS $FUZZO -o $OUT/fuzz_disasm$branch libcapstone.a $LIB_FUZZING_ENGINE
 
-    cd ../../
+    python3 -m pip uninstall -y capstone
 done

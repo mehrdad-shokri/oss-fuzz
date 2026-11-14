@@ -14,23 +14,31 @@
 #
 ################################################################################
 
-# Docker image with head clang installed.
+# Docker image with clang installed.
 
 FROM gcr.io/oss-fuzz-base/base-image
 
+ARG arch=x86_64
+
+ENV FUZZINTRO_OUTDIR=$SRC
+
 # Install newer cmake.
-ENV CMAKE_VERSION 3.18.1
+# Many projects, as well as recent clang versions, need a newer cmake.
+ENV CMAKE_VERSION 3.29.2
 RUN apt-get update && apt-get install -y wget sudo && \
-    wget https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-Linux-x86_64.sh && \
-    chmod +x cmake-$CMAKE_VERSION-Linux-x86_64.sh && \
-    ./cmake-$CMAKE_VERSION-Linux-x86_64.sh --skip-license --prefix="/usr/local" && \
-    rm cmake-$CMAKE_VERSION-Linux-x86_64.sh && \
-    SUDO_FORCE_REMOVE=yes apt-get remove --purge -y wget sudo
+    wget -q https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-Linux-$arch.sh && \
+    chmod +x cmake-$CMAKE_VERSION-Linux-$arch.sh && \
+    ./cmake-$CMAKE_VERSION-Linux-$arch.sh --skip-license --prefix="/usr/local" && \
+    rm cmake-$CMAKE_VERSION-Linux-$arch.sh && \
+    SUDO_FORCE_REMOVE=yes apt-get autoremove --purge -y wget sudo && \
+    rm -rf /usr/local/doc/cmake /usr/local/bin/cmake-gui
 
 COPY checkout_build_install_llvm.sh /root/
+
 # Keep all steps in the same script to decrease the number of intermediate
 # layes in docker file.
-RUN /root/checkout_build_install_llvm.sh
+ARG FULL_LLVM_BUILD
+RUN FULL_LLVM_BUILD=$FULL_LLVM_BUILD /root/checkout_build_install_llvm.sh
 RUN rm /root/checkout_build_install_llvm.sh
 
 # Setup the environment.
@@ -39,8 +47,25 @@ ENV CXX "clang++"
 ENV CCC "clang++"
 
 # FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION is described at
-# http://libfuzzer.info#fuzzer-friendly-build-mode
+# https://llvm.org/docs/LibFuzzer.html#fuzzer-friendly-build-mode
 
-ENV CFLAGS "-O1 -fno-omit-frame-pointer -gline-tables-only -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION"
+# The implicit-function-declaration and implicit-int errors are downgraded to a
+# warning, to allow compiling legacy code.
+# See https://releases.llvm.org/16.0.0/tools/clang/docs/ReleaseNotes.html#potentially-breaking-changes
+# Same for deprecated-declarations, int-conversion,
+# incompatible-function-pointer-types, enum-constexpr-conversion,
+# vla-cxx-extension
+
+ENV CFLAGS -O1 \
+  -fno-omit-frame-pointer \
+  -gline-tables-only \
+  -Wno-error=incompatible-function-pointer-types \
+  -Wno-error=int-conversion \
+  -Wno-error=deprecated-declarations \
+  -Wno-error=implicit-function-declaration \
+  -Wno-error=implicit-int \
+  -Wno-error=unknown-warning-option \
+  -Wno-error=vla-cxx-extension \
+  -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 ENV CXXFLAGS_EXTRA "-stdlib=libc++"
 ENV CXXFLAGS "$CFLAGS $CXXFLAGS_EXTRA"

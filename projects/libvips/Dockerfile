@@ -14,27 +14,48 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 RUN apt-get update && apt-get install -y \
-  curl \
   automake \
+  autopoint \
   cmake \
-  nasm \
-  gtk-doc-tools \
-  gobject-introspection \
-  libfftw3-dev \
+  curl \
+  gettext \
+  glib2.0-dev \
+  libbrotli-dev \
   libexpat1-dev \
-  libffi-dev \
-  glib2.0-dev
-RUN mkdir afl-testcases
-RUN curl https://lcamtuf.coredump.cx/afl/demo/afl_testcases.tgz | tar xzC afl-testcases
-RUN git clone --depth 1 https://github.com/libvips/libvips
+  libfftw3-dev \
+  libtool \
+  nasm \
+  python3-pip
+RUN pip3 install meson ninja
+RUN mkdir pdfium-latest
+RUN curl -L https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz | tar xzC pdfium-latest
+RUN git clone --depth 1 https://github.com/libvips/libvips.git
+RUN git clone --depth 1 https://github.com/libvips/seed-corpora.git
 RUN git clone --depth 1 https://github.com/madler/zlib.git
-RUN git clone --depth 1 https://github.com/libexif/libexif
-RUN git clone --depth 1 https://github.com/libjpeg-turbo/libjpeg-turbo
-RUN git clone --depth 1 https://github.com/glennrp/libpng.git
-RUN git clone --depth 1 https://git.code.sf.net/p/giflib/code libgif
+RUN git clone --depth 1 https://github.com/libexif/libexif.git
+RUN git clone --depth 1 https://github.com/mm2/Little-CMS.git lcms
+RUN git clone --depth 1 https://github.com/libjpeg-turbo/libjpeg-turbo.git
+RUN git clone --depth 1 https://github.com/pnggroup/libpng.git
 RUN git clone --depth 1 https://chromium.googlesource.com/webm/libwebp
-RUN git clone --depth 1 https://gitlab.com/libtiff/libtiff 
+RUN git clone --depth 1 https://gitlab.com/libtiff/libtiff.git
+RUN git clone --depth 1 https://aomedia.googlesource.com/aom
+RUN git clone --depth 1 https://github.com/strukturag/libheif.git
+RUN git clone --depth 1 https://github.com/libjxl/libjxl.git
+RUN git clone --depth 1 https://github.com/lovell/libimagequant.git
+RUN git clone --depth 1 https://github.com/dloebl/cgif.git
+RUN git clone --depth 1 https://github.com/google/highway.git
+RUN git clone --depth 1 https://github.com/google/libultrahdr.git
+
+# Prevent fuzz-introspector from analyzing harnesses in sub-dependencies
+RUN find "$SRC" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
+  -not -path "$SRC/aflplusplus/*" \
+  -not -path "$SRC/fuzztest/*" \
+  -not -path "$SRC/honggfuzz/*" \
+  -not -path "$SRC/libfuzzer/*" \
+  -not -path "$SRC/libvips/*" \
+  -exec sed -i 's/LLVMFuzzerTestOneInput/DisableFuzzerTestOneInput/g' {} +
+
 WORKDIR libvips
 COPY build.sh $SRC/

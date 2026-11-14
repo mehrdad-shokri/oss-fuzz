@@ -1,4 +1,19 @@
 #!/bin/bash
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+################################################################################
 
 # Ignore memory leaks from python scripts invoked in the build
 export ASAN_OPTIONS="detect_leaks=0"
@@ -8,7 +23,40 @@ export MSAN_OPTIONS="halt_on_error=0:exitcode=0:report_umrs=0"
 # which thinks pthreads are available without any CLI flags
 CFLAGS=${CFLAGS//"-pthread"/}
 
+# Ensure assert statements are enabled. It may help identify problems
+# earlier if those fire.
+CFLAGS="${CFLAGS} -UNDEBUG"
+
+# We use some internal CPython API.
+CFLAGS="${CFLAGS} -IInclude/internal/"
+
+# Build zlib from source with the sanitizer/coverage flags
+ZLIB_PREFIX=$WORK/zlib
+pushd $SRC/zlib
+./configure --static --prefix=$ZLIB_PREFIX
+# Build as a static library since it's linked into shared extension modules
+make -j$(nproc) CFLAGS="$CFLAGS -fPIC"
+make install
+popd
+
+# Build liblzma from source with the sanitizer/coverage flags
+LZMA_PREFIX=$WORK/xz
+pushd $SRC/xz
+./autogen.sh --no-po4a --no-doxygen
+# Static + PIC for the same reason as zlib. Also, we can skip the command line tools
+./configure --prefix=$LZMA_PREFIX \
+  --enable-static --disable-shared --with-pic --enable-debug \
+  --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
+  --disable-nls --disable-doc
+make -j$(nproc)
+make install
+popd
+
 FLAGS=()
+FLAGS+=("ZLIB_CFLAGS=-I$ZLIB_PREFIX/include")
+FLAGS+=("ZLIB_LIBS=$ZLIB_PREFIX/lib/libz.a")
+FLAGS+=("LIBLZMA_CFLAGS=-I$LZMA_PREFIX/include")
+FLAGS+=("LIBLZMA_LIBS=$LZMA_PREFIX/lib/liblzma.a -lpthread")
 case $SANITIZER in
   address)
     FLAGS+=("--with-address-sanitizer")

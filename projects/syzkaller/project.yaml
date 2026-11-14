@@ -1,8 +1,8 @@
 homepage: "https://github.com/google/syzkaller.git"
-primary_contact: "dvyukov@google.com"
+primary_contact: "nogikh@google.com"
 auto_ccs:
-  - "andreyknvl@google.com"
-  - "mmoroz@chromium.org"
+  - "dvyukov@google.com"
+  - "tarasmadan@google.com"
   - "syzkaller@googlegroups.com"
 language: go
 fuzzing_engines:
@@ -10,3 +10,5 @@ fuzzing_engines:
 sanitizers:
   - address
 view_restrictions: none
+main_repo: 'https://github.com/google/syzkaller'
+file_github_issue: True

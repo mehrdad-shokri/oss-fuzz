@@ -1,3 +1,4 @@
+base_os_version: ubuntu-24-04
 homepage: https://github.com/hercules-team/augeas
 language: c++
 primary_contact: lutter@watzmann.net
@@ -7,3 +8,10 @@ auto_ccs:
 sanitizers:
   - address
   - undefined
+main_repo: 'https://github.com/hercules-team/augeas'
+
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer
+

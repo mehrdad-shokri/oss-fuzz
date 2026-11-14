@@ -14,13 +14,14 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 
 RUN apt-get update && apt-get install -y ninja-build cmake \
-                       flex bison libc-ares-dev \
-                       libglib2.0-dev libgcrypt20-dev
+                       flex libc-ares-dev \
+                       libglib2.0-dev libgcrypt20-dev wget
 
-RUN git clone --depth=1 https://code.wireshark.org/review/wireshark
+RUN wget https://download.gnome.org/sources/libxml2/2.12/libxml2-2.12.10.tar.xz
+RUN git clone --depth=1 https://gitlab.com/wireshark/wireshark.git
 RUN git clone --depth=1 https://bitbucket.org/jwzawadzki/wireshark-fuzzdb.git
 
 WORKDIR wireshark

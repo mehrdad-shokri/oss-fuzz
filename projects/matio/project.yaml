@@ -7,3 +7,10 @@ sanitizers:
   - undefined
 architectures:
   - x86_64
+main_repo: 'https://github.com/tbeu/matio'
+
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer
+

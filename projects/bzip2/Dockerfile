@@ -15,8 +15,7 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y make autoconf automake libtool wget
 RUN git clone git://sourceware.org/git/bzip2.git
 RUN git clone git://sourceware.org/git/bzip2-tests.git
-COPY build.sh *.c $SRC/
+COPY run_tests.sh build.sh *.c $SRC/
 WORKDIR $SRC

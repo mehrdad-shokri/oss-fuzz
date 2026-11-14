@@ -15,32 +15,62 @@
 #
 ################################################################################
 
-# build fuzzers
-make -j$(nproc) CC=$CC CXX=$CXX CFLAGS="$CFLAGS" FUZZ_CXXFLAGS="$CXXFLAGS" \
-  LIB_FUZZING_ENGINE=$LIB_FUZZING_ENGINE fuzz-all
+# build zlib
+pushd "$SRC/zlib"
+./configure --static --prefix="$WORK"
+make -j$(nproc) CFLAGS="$CFLAGS -fPIC"
+make install
+popd
+export ZLIB_PATH=$WORK
 
-FUZZERS="fuzz-pack-headers fuzz-pack-idx fuzz-commit-graph"
+# Enable a timeout for lockfiles rather than exit immediately. This is to
+# overcome in case multiple processes try to lock a file around the same
+# time. 
+sed -i 's/hold_lock_file_for_update_timeout(lk, path, flags, 0);/hold_lock_file_for_update_timeout(lk, path, flags, 5000);/g' lockfile.h
+
+# Override GITLIBS to exclude common-main.o. The fuzzing engine (libFuzzer or AFL)
+# provides its own main() that calls LLVMFuzzerTestOneInput().
+# For AFL, we also need --whole-archive to force include the AFL driver's main().
+if [ "${FUZZING_ENGINE:-}" = "afl" ]; then
+  FUZZING_ENGINE_FLAGS="-Wl,--whole-archive $LIB_FUZZING_ENGINE -Wl,--no-whole-archive"
+else
+  FUZZING_ENGINE_FLAGS="$LIB_FUZZING_ENGINE"
+fi
+
+# Add the rust library to the build as git is migrating to rust
+RUST_LIB="$(make -s --no-print-directory \
+  --eval='print-rust-lib: ; @echo $(RUST_LIB)' print-rust-lib)"
+if [ -z "$RUST_LIB" ]; then
+  echo "ERROR: could not determine RUST_LIB from the git Makefile" >&2
+  exit 1
+fi
+echo "Linking Rust library: $RUST_LIB"
+
+# build fuzzers
+make -j$(nproc) CC=$CC CXX=$CXX CFLAGS="$CFLAGS" \
+  FUZZ_CXXFLAGS="$CXXFLAGS" \
+  LIB_FUZZING_ENGINE="$FUZZING_ENGINE_FLAGS" \
+  GITLIBS="libgit.a $RUST_LIB" fuzz-all
+
+FUZZERS=""
+FUZZERS="$FUZZERS fuzz-commit-graph"
+FUZZERS="$FUZZERS fuzz-config"
+FUZZERS="$FUZZERS fuzz-credential-from-url-gently"
+FUZZERS="$FUZZERS fuzz-date"
+FUZZERS="$FUZZERS fuzz-pack-headers"
+FUZZERS="$FUZZERS fuzz-pack-idx"
+FUZZERS="$FUZZERS fuzz-parse-attr-line"
+FUZZERS="$FUZZERS fuzz-url-decode-mem"
 
 # copy fuzzers
 for fuzzer in $FUZZERS ; do
-  cp $fuzzer $OUT
+  cp oss-fuzz/$fuzzer $OUT
 done
 
-# build corpora from Git's own packfiles
-zip -j $OUT/fuzz-pack-idx_seed_corpus.zip .git/objects/pack/*.idx
-for packfile in .git/objects/pack/*.pack ; do
-  dd ibs=1 skip=12 if=$packfile of=$packfile.trimmed
-done
-zip -j $OUT/fuzz-pack-headers_seed_corpus.zip .git/objects/pack/*.pack.trimmed
-
-# build commit-graph corpus
-./git commit-graph write
-zip -j $OUT/fuzz-commit-graph_seed_corpus .git/objects/info/commit-graph
-
-# Mute stderr
 for fuzzer in $FUZZERS ; do
   cat >$OUT/$fuzzer.options << EOF
 [libfuzzer]
-close_fd_mask = 2
+detect_leaks = 0
 EOF
 done
+

@@ -14,8 +14,14 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y make autoconf automake libtool xsltproc libncursesw5-dev libtinfo5 libxml2-dev libxml2-utils libidn11-dev
-RUN git clone https://github.com/neomutt/neomutt neomutt
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
+
+RUN	apt-get update && \
+	apt-get install -y libncurses-dev libtinfo6 libtool make pkgconf libidn2-0-dev libsqlite3-dev
+
+RUN git clone --depth 1 https://github.com/neomutt/neomutt
+RUN git clone --depth 1 https://github.com/neomutt/corpus-address
+
 WORKDIR neomutt
 COPY build.sh $SRC/
+

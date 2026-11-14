@@ -15,11 +15,9 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y make autoconf automake libtool wget
-# This downloads the latest version at the time of writing. There does not
-# appear to be a head version of FreeImage.
-RUN wget https://downloads.sourceforge.net/freeimage/FreeImage3180.zip
-RUN unzip FreeImage3180.zip
-WORKDIR $SRC
-COPY build.sh $SRC/
+RUN apt-get update && apt-get install -y make autoconf automake libtool wget dos2unix
+RUN svn checkout https://svn.code.sf.net/p/freeimage/svn/ freeimage-svn
+WORKDIR $SRC/freeimage-svn/FreeImage/trunk/
+RUN wget "https://salsa.debian.org/debian-phototools-team/jxrlib/-/raw/7e12ab1185b347c0edfd893471c055e3ae7830b5/debian/patches/082bb032be1f6c75173bf603252e4f37bfded9fa.patch" --output-document=$SRC/jxrlib_tmpnam.patch
+COPY run_tests.sh build.sh $SRC/
 COPY load_from_memory_fuzzer.cc $SRC/

@@ -15,23 +15,91 @@
 #
 ################################################################################
 
-CONFIGURE_FLAGS=""
+export FUZZ_INTROSPECTOR_CONFIG=$SRC/openssl/fuzz/fuzz_introspector_exclusion.config
+
+CONFIGURE_FLAGS="--debug enable-fuzz-libfuzzer -DPEDANTIC -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION no-shared enable-tls1_3 enable-rc5 enable-md2 enable-nextprotoneg enable-weak-ssl-ciphers --with-fuzzer-lib=/usr/lib/libFuzzingEngine $CFLAGS -fno-sanitize=alignment enable-unit-test no-tests"
 if [[ $CFLAGS = *sanitize=memory* ]]
 then
-  CONFIGURE_FLAGS="no-asm"
+  CONFIGURE_FLAGS="$CONFIGURE_FLAGS no-asm"
+fi
+if [[ $CFLAGS != *-m32* ]]
+then
+  CONFIGURE_FLAGS="$CONFIGURE_FLAGS enable-ec_nistp_64_gcc_128"
+fi
+if [[ $CFLAGS = *-m32* ]]
+then
+  # Prevent error:
+  #
+  # error while loading shared libraries:
+  # libatomic.so.1: cannot open shared object file:
+  # No such file or directory
+  CONFIGURE_FLAGS="$CONFIGURE_FLAGS no-threads"
 fi
 
-./config --debug enable-fuzz-libfuzzer -DPEDANTIC -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION no-shared enable-tls1_3 enable-rc5 enable-md2 enable-ec_nistp_64_gcc_128 enable-ssl3 enable-ssl3-method enable-nextprotoneg enable-weak-ssl-ciphers --with-fuzzer-lib=/usr/lib/libFuzzingEngine $CFLAGS -fno-sanitize=alignment $CONFIGURE_FLAGS
+function build_fuzzers() {
+    SUFFIX=$1
+    local EXTRA_CONFIGURE_FLAGS="$2"
+    local EXTRA_SOURCES="$3"
 
-make -j$(nproc) LDCMD="$CXX $CXXFLAGS"
+    if [[ $CFLAGS = *-m32* ]]
+    then
+        setarch i386 ./config $CONFIGURE_FLAGS $EXTRA_CONFIGURE_FLAGS
+    else
+        ./config $CONFIGURE_FLAGS $EXTRA_CONFIGURE_FLAGS
+    fi
 
-fuzzers=$(find fuzz -executable -type f '!' -name \*.py '!' -name \*-test '!' -name \*.pl)
-for f in $fuzzers; do
-	fuzzer=$(basename $f)
-	cp $f $OUT/
-	zip -j $OUT/${fuzzer}_seed_corpus.zip fuzz/corpora/${fuzzer}/*
-done
+    df -h
 
-cp $SRC/*.options $OUT/
-cp fuzz/oids.txt $OUT/asn1.dict
-cp fuzz/oids.txt $OUT/x509.dict
+    make -j$(nproc) LDCMD="$CXX $CXXFLAGS"
+
+    fuzzers=$(find fuzz -executable -type f '!' -name \*.py '!' -name \*-test '!' -name \*.pl '!' -name \*.sh)
+    for f in $fuzzers; do
+        fuzzer=$(basename $f)
+        cp $f $OUT/${fuzzer}${SUFFIX}
+        zip -j $OUT/${fuzzer}${SUFFIX}_seed_corpus.zip fuzz/corpora/${fuzzer}/*
+    done
+
+    options=$(find $SRC/ -maxdepth 1 -name '*.options')
+    for o in $options; do
+        o_base=$(basename $o)
+        fuzzer=${o_base%".options"}
+        cp $o $OUT/${fuzzer}${SUFFIX}.options
+    done
+    cp fuzz/oids.txt $OUT/asn1${SUFFIX}.dict
+    cp fuzz/oids.txt $OUT/x509${SUFFIX}.dict
+    if [ "$SANITIZER" == coverage ]; then
+      DESTDIR=$OUT/src/openssl${SUFFIX#_}
+      SOURCES="include crypto ssl providers fuzz $EXTRA_SOURCES"
+      mkdir -p $DESTDIR
+      if [ -f e_os.h ]; then
+        cp e_os.h $DESTDIR/
+      fi
+      find $SOURCES -type f -a \( -name '*.[ch]' -o -name '*.inc' \) -exec cp --parents '{}' $DESTDIR/ \;
+    fi
+
+    df -h
+    if [[ -z "${CAPTURE_REPLAY_SCRIPT:-}" ]]; then
+      git clean -dfx
+    fi
+    df -h
+}
+
+cd $SRC/openssl/
+build_fuzzers "" "no-apps no-docs" ""
+
+# In introspector, indexer builds and when capturing replay builds, only build
+# the master branch
+if [[ "$SANITIZER" == introspector || -n "${INDEXER_BUILD:-}" || -n "${CAPTURE_REPLAY_SCRIPT:-}" ]]; then
+  exit 0
+fi
+
+cd $SRC/openssl34/
+build_fuzzers "_34" "no-apps no-docs" "engines"
+cd $SRC/openssl35/
+build_fuzzers "_35" "no-apps no-docs" "engines"
+cd $SRC/openssl36/
+build_fuzzers "_36" "no-apps no-docs" "engines"
+cd $SRC/openssl40/
+build_fuzzers "_40" "no-apps no-docs" ""
+cd $SRC/openssl41/
+build_fuzzers "_41" "no-apps no-docs" ""

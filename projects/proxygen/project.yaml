@@ -1,9 +1,11 @@
+base_os_version: ubuntu-24-04
 homepage: "https://github.com/facebook/proxygen"
 language: c++
-primary_contact: "mhl@fb.com"
+primary_contact: "axxu@fb.com"
 auto_ccs:
-  - "gulshan@fb.com"
-  - "reed@fb.com"
+  - "hmf@fb.com"
+  - "yaohway@fb.com"
+  - "axxu@fb.com"
   - "lniccolini@fb.com"
   - "afrind@fb.com"
   - "subodh@fb.com"
@@ -21,3 +23,4 @@ fuzzing_engines:
 sanitizers:
   - address
   - undefined
+main_repo: 'https://github.com/facebook/proxygen.git'

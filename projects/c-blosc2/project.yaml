@@ -1,8 +1,7 @@
+base_os_version: ubuntu-24-04
 homepage: "https://github.com/Blosc/c-blosc2"
 language: c++
 primary_contact: "blosc.oss.fuzz@gmail.com"
-auto_ccs:
-  - "nathan.moinvaziri@gmail.com"
 sanitizers:
   - address
   - memory
@@ -10,3 +9,10 @@ sanitizers:
 architectures:
   - x86_64
   - i386
+main_repo: 'https://github.com/Blosc/c-blosc2.git'
+
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer
+

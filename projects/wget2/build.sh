@@ -16,20 +16,18 @@
 ################################################################################
 
 export WGET2_DEPS_PATH=$SRC/wget2_deps
-export PKG_CONFIG_PATH=$WGET2_DEPS_PATH/lib/pkgconfig
+export PKG_CONFIG_PATH=$WGET2_DEPS_PATH/lib64/pkgconfig:$WGET2_DEPS_PATH/lib/pkgconfig
 export CPPFLAGS="-I$WGET2_DEPS_PATH/include"
 export LDFLAGS="-L$WGET2_DEPS_PATH/lib"
 export GNULIB_SRCDIR=$SRC/gnulib
 export LLVM_PROFILE_FILE=/tmp/prof.test
 
 cd $SRC/libunistring
-./autogen.sh
 ./configure --enable-static --disable-shared --prefix=$WGET2_DEPS_PATH
 make -j$(nproc)
 make install
 
 cd $SRC/libidn2
-./bootstrap
 ./configure --enable-static --disable-shared --disable-doc --disable-gcc-warnings --prefix=$WGET2_DEPS_PATH
 make -j$(nproc)
 make install
@@ -40,24 +38,35 @@ cd $SRC/libpsl
 make -j$(nproc)
 make install
 
-GNUTLS_CONFIGURE_FLAGS=""
-NETTLE_CONFIGURE_FLAGS=""
-if [[ $CFLAGS = *sanitize=memory* ]]; then
-  GNUTLS_CONFIGURE_FLAGS="--disable-hardware-acceleration"
-  NETTLE_CONFIGURE_FLAGS="--disable-assembler --disable-fat"
-fi
+cd $SRC/gmp
+./configure --enable-static --disable-shared --prefix=$WGET2_DEPS_PATH
+make -j$(nproc)
+make install
 
-# We could use GMP from git repository to avoid false positives in
-# sanitizers, but GMP doesn't compile with clang. We use gmp-mini
-# instead.
 cd $SRC/nettle
-bash .bootstrap
-./configure --enable-mini-gmp --enable-static --disable-shared --disable-documentation --prefix=$WGET2_DEPS_PATH $NETTLE_CONFIGURE_FLAGS
+./configure --enable-static --disable-shared --disable-documentation --disable-openssl --disable-assembler --disable-fat --prefix=$WGET2_DEPS_PATH
 ( make -j$(nproc) || make -j$(nproc) ) && make install
 if test $? != 0;then
         echo "Failed to compile nettle"
         exit 1
 fi
+
+cd $SRC/libtasn1
+./configure --enable-static --disable-shared --disable-doc --prefix=$WGET2_DEPS_PATH
+make -j$(nproc)
+make install
+
+# gnutls no longer bundles libtasn1, so libgnutls.a now has undefined asn1_*
+# references. The fuzz target's link list is hardcoded in upstream's
+# fuzz/Makefile.am (XLIBS=...) and every environment hook -- CFLAGS, LIBS,
+# LIB_FUZZING_ENGINE -- lands *before* -lgnutls, which is the wrong side for
+# static archive resolution. Force libtasn1's objects in unconditionally
+# instead, which is order-independent. --allow-multiple-definition goes with
+# it: libtasn1 links its own copy of gnulib, so forcing every object in also
+# brings in c-ctype.o etc., which collide with wget's identical gnulib copy
+# ("multiple definition of `c_tolower'"). They are the same upstream sources,
+# so letting the first definition win is safe.
+export LIB_FUZZING_ENGINE="$LIB_FUZZING_ENGINE -Wl,--whole-archive $WGET2_DEPS_PATH/lib/libtasn1.a -Wl,--no-whole-archive -Wl,--allow-multiple-definition"
 
 cd $SRC/gnutls
 touch .submodule.stamp
@@ -65,45 +74,58 @@ touch .submodule.stamp
 GNUTLS_CFLAGS=`echo $CFLAGS|sed s/-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION//`
 LIBS="-lunistring" \
 CFLAGS="$GNUTLS_CFLAGS" \
-./configure --with-nettle-mini --enable-gcc-warnings --enable-static --disable-shared --with-included-libtasn1 \
+./configure --enable-gcc-warnings --enable-static --disable-shared \
     --with-included-unistring --without-p11-kit --disable-doc --disable-tests --disable-tools --disable-cxx \
-    --disable-maintainer-mode --disable-libdane --disable-gcc-warnings --disable-full-test-suite \
-    --prefix=$WGET2_DEPS_PATH $GNUTLS_CONFIGURE_FLAGS
+    --disable-maintainer-mode --disable-libdane --disable-gcc-warnings --disable-full-test-suite --disable-guile \
+    --prefix=$WGET2_DEPS_PATH
 make -j$(nproc)
 make install
 
 cd $SRC/libmicrohttpd-*
-LIBS="-lgnutls -lhogweed -lnettle -lidn2 -lunistring" \
-./configure --prefix=$WGET2_DEPS_PATH --disable-doc --disable-examples --disable-shared --enable-static
+./configure --enable-static --disable-shared --disable-doc --disable-examples --disable-tools --prefix=$WGET2_DEPS_PATH
 make -j$(nproc)
 make install
-
 
 # avoid iconv() memleak on Ubuntu 16.04 image (breaks test suite)
 export ASAN_OPTIONS=detect_leaks=0
 
 cd $SRC/wget2
+
+# gnulib's standalone lib/gnulib.mk appends to clean variables with '+=' and
+# relies on the including lib/Makefile.am to initialize them with '='. wget2's
+# lib/Makefile.am initializes most of them but not MAINTAINERCLEANFILES. Since
+# gnulib commit 86488a20ea (2026-05-16) the thread-optim module appends to
+# MAINTAINERCLEANFILES, so automake now fails with "MAINTAINERCLEANFILES must
+# be set with '=' before using '+='". Initialize it before the gnulib.mk include.
+grep -q '^MAINTAINERCLEANFILES =' lib/Makefile.am || \
+  sed -i '/^include gnulib.mk/i MAINTAINERCLEANFILES =' lib/Makefile.am
+
 ./bootstrap
 
-# build and run non-networking tests
-LIBS="-lgnutls -lhogweed -lnettle -lidn2 -lunistring" \
-  ./configure -C --enable-static --disable-shared --disable-doc --without-plugin-support
+LIBS="-lgnutls -ltasn1 -lhogweed -lnettle -lgmp -lidn2 -lunistring -lpsl -lz" \
+  ./configure -C --enable-static --disable-shared --disable-doc --without-plugin-support --with-libdane=no \
+  --disable-examples
 make clean
 make -j$(nproc)
 make -j$(nproc) -C unit-tests check
 make -j$(nproc) -C fuzz check
 
-# build for fuzzing
-LIBS="-lgnutls -lhogweed -lnettle -lidn2 -lunistring" \
-  ./configure -C --enable-fuzzing --enable-static --disable-shared --disable-doc --without-plugin-support
+LIBS="-lgnutls -ltasn1 -lhogweed -lnettle -lgmp -lidn2 -lunistring -lpsl -lz" \
+  ./configure -C --enable-fuzzing --enable-static --disable-shared --disable-doc --without-plugin-support --with-libdane=no \
+  --disable-examples
 make clean
 make -j$(nproc) -C lib
 make -j$(nproc) -C include
 make -j$(nproc) -C libwget
 make -j$(nproc) -C src
 
+# Ensure our libraries can be found
+ln -sf $WGET2_DEPS_PATH/lib64/libhogweed.a $WGET2_DEPS_PATH/lib/libhogweed.a
+ln -sf $WGET2_DEPS_PATH/lib64/libnettle.a  $WGET2_DEPS_PATH/lib/libnettle.a
+
 # build fuzzers
 cd fuzz
+
 CXXFLAGS="$CXXFLAGS -L$WGET2_DEPS_PATH/lib/" make oss-fuzz
 
 find . -name '*_fuzzer' -exec cp -v '{}' $OUT ';'

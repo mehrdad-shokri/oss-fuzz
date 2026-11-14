@@ -15,6 +15,15 @@
 # limitations under the License.
 #
 ################################################################################
+
+# Install Boost headers
+cd $SRC/
+tar jxf boost_1_84_0.tar.bz2
+cd boost_1_84_0/
+CFLAGS="" CXXFLAGS="" ./bootstrap.sh
+CFLAGS="" CXXFLAGS="" ./b2 headers
+cp -R boost/ /usr/include/
+
 mkdir -p $WORK/libressl
 cd $WORK/libressl
 
@@ -58,3 +67,4 @@ done
 cp $SRC/*.options $OUT/
 cp $LIBRESSL_FUZZERS/oids.txt $OUT/asn1.dict
 cp $LIBRESSL_FUZZERS/oids.txt $OUT/x509.dict
+

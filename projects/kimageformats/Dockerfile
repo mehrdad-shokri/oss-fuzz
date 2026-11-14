@@ -15,16 +15,8 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get install --yes cmake
-RUN git clone --depth 1 https://github.com/madler/zlib.git
-RUN git clone --depth 1 https://github.com/nih-at/libzip.git
-RUN git clone --depth 1 https://invent.kde.org/frameworks/extra-cmake-modules.git
-RUN git clone --depth 1 --branch=5.15 git://code.qt.io/qt/qtbase.git
-RUN git clone --depth 1 https://invent.kde.org/frameworks/karchive.git
-RUN git clone --depth 1 https://invent.kde.org/frameworks/kimageformats.git
-COPY build.sh $SRC
-COPY kimgio_fuzzer.cc $SRC
-WORKDIR kimageformats
+RUN git clone --depth 1 -b master https://invent.kde.org/frameworks/kimageformats.git
+RUN $SRC/kimageformats/autotests/ossfuzz/prepare_build.sh
+RUN cp $SRC/kimageformats/autotests/ossfuzz/build_fuzzers.sh $SRC/build.sh
 
-
-
+WORKDIR $SRC/kimageformats

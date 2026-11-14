@@ -6,3 +6,9 @@ auto_ccs:
    - "fenner@gmail.com"
    - "bvanassche@acm.org"
    - "magfr@lysator.liu.se"
+   - "david@adalogics.com"
+main_repo: "https://github.com/net-snmp/net-snmp"
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer

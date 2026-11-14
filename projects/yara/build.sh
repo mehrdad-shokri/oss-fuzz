@@ -16,7 +16,7 @@
 ################################################################################
 
 ./bootstrap.sh
-./configure --enable-debug --enable-dex --enable-dotnet --without-crypto
+./configure --enable-macho --enable-debug --enable-dex --enable-dotnet --without-crypto
 
 make clean
 make -j$(nproc) all
@@ -26,8 +26,8 @@ fuzzers=$(find $SRC/yara/tests/oss-fuzz/ -name "*.cc")
 for f in $fuzzers; do
   fuzzer_name=$(basename -s ".cc" $f)
   echo "Building $fuzzer_name"
-  $CXX $CXXFLAGS -std=c++11 -I. $f -o $OUT/$fuzzer_name \
-    ./libyara/.libs/libyara.a \
+  $CXX $CXXFLAGS -std=c++17 -I. -Ilibyara/include $f -o $OUT/$fuzzer_name \
+    ./.libs/libyara.a \
     $LIB_FUZZING_ENGINE
   if [ -d "$SRC/yara/tests/oss-fuzz/${fuzzer_name}_corpus" ]; then
     zip -j $OUT/${fuzzer_name}_seed_corpus.zip $SRC/yara/tests/oss-fuzz/${fuzzer_name}_corpus/*
@@ -36,3 +36,6 @@ done
 
 find $SRC/yara/tests/oss-fuzz -name \*.dict -exec cp {} $OUT \;
 find $SRC/yara/tests/oss-fuzz -name \*.options -exec cp {} $OUT \;
+
+# Build unit test
+make -j$(nproc) test-alignment test-api test-arena test-async test-atoms test-bitmask test-dex test-dotnet test-elf test-macho test-math test-pe test-re-split test-stack test-string test-version

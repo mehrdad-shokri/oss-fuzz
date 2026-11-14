@@ -1,9 +1,0 @@
-homepage: "http://www.rarlab.com/"
-language: c++
-primary_contact: "roshal@rarlab.com"
-auto_ccs:
-  - "vakh@chromium.org"
-sanitizers:
-  - address
-  - memory
-  - undefined

@@ -1,6 +1,7 @@
+base_os_version: ubuntu-24-04
 homepage: "http://www.html-tidy.org/"
 language: c++
-primary_contact: "sbucur@google.com"
+primary_contact: "balthisar@gmail.com"
 auto_ccs:
   - "nmarrow@google.com"
   - "pmokati@google.com"
@@ -8,12 +9,10 @@ fuzzing_engines:
   - libfuzzer
   - afl
   - honggfuzz
-  - dataflow
 sanitizers:
   - address
   - undefined
-  - memory
-  - dataflow
 labels:
   tidy_fuzzer:
     - sundew
+main_repo: 'https://github.com/htacg/tidy-html5.git'

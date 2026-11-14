@@ -19,9 +19,16 @@ FROM gcr.io/oss-fuzz-base/base-builder
 # Note that we don't use the system libxml2 but a custom instrumented build.
 # libgcrypt is required for the crypto extensions of libexslt.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    make autoconf automake libtool pkg-config \
+    make autoconf libtool pkg-config \
     libgcrypt-dev
-RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git
+# Build requires automake 1.16.3
+RUN curl -LO http://mirrors.kernel.org/ubuntu/pool/main/a/automake-1.16/automake_1.16.5-1.3_all.deb && \
+    apt install ./automake_1.16.5-1.3_all.deb
+# TODO: Update this when new releases are issued
+# to keep run_tests.sh working. The reason for this
+# is https://gitlab.gnome.org/GNOME/libxslt/-/issues/126#note_2273444
+ENV LATEST_LIBXML2_RELEASE_TAG=v2.14.4
+RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxml2.git --branch=$LATEST_LIBXML2_RELEASE_TAG
 RUN git clone --depth 1 https://gitlab.gnome.org/GNOME/libxslt.git
 WORKDIR libxslt
-COPY build.sh $SRC/
+COPY build.sh run_tests.sh $SRC/

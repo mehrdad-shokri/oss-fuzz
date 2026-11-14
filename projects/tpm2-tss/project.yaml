@@ -1,11 +1,17 @@
+base_os_version: ubuntu-24-04
 homepage: "https://github.com/tpm2-software/tpm2-tss"
 language: c++
-primary_contact: "tadeusz.struk@intel.com"
+primary_contact: "william.c.roberts@intel.com"
 auto_ccs:
   - "andreas.fuchs@sit.fraunhofer.de"
-  - "john.s.andersen@intel.com"
-  - "william.c.roberts@intel.com"
+  - "tstruk@gmail.com"
+fuzzing_engines:
+  - "afl"
+  - "honggfuzz"
+  - "libfuzzer"
 sanitizers:
   - address
-  - memory
+# Disabled MSAN because of https://github.com/google/oss-fuzz/issues/6294
+#  - memory
   - undefined
+main_repo: 'https://github.com/tpm2-software/tpm2-tss.git'

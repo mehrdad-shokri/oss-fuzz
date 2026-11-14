@@ -15,217 +15,336 @@
 #
 ################################################################################
 
-# Build SwiftShader
-pushd third_party/externals/swiftshader/
-export SWIFTSHADER_INCLUDE_PATH=$PWD/include
-# SwiftShader already has a build/ directory, use something else
-rm -rf build_swiftshader
-mkdir build_swiftshader
-
-cd build_swiftshader
-if [ $SANITIZER == "address" ]; then
-  CMAKE_SANITIZER="SWIFTSHADER_ASAN"
-elif [ $SANITIZER == "memory" ]; then
-  CMAKE_SANITIZER="SWIFTSHADER_MSAN"
-elif [ $SANITIZER == "undefined" ]; then
-  # The current SwiftShader build needs -fno-sanitize=vptr, but it cannot be
-  # specified here since -fsanitize=undefined will always come after any
-  # user specified flags passed to cmake. SwiftShader does not need to be
-  # built with the undefined sanitizer in order to fuzz Skia, so don't.
-  CMAKE_SANITIZER="SWIFTSHADER_UBSAN_DISABLED"
-elif [ $SANITIZER == "coverage" ]; then
-  CMAKE_SANITIZER="SWIFTSHADER_EMIT_COVERAGE"
-else
-  exit 1
-fi
-CFLAGS= CXXFLAGS="-stdlib=libc++" cmake .. -GNinja -DCMAKE_MAKE_PROGRAM="$SRC/depot_tools/ninja" -D$CMAKE_SANITIZER=1
-
-$SRC/depot_tools/ninja libGLESv2 libEGL
-cp libGLESv2.so libEGL.so $OUT
-export SWIFTSHADER_LIB_PATH=$OUT
-
-popd
 # These are any clang warnings we need to silence.
 DISABLE="-Wno-zero-as-null-pointer-constant -Wno-unused-template
          -Wno-cast-qual"
 # Disable UBSan vptr since target built with -fno-rtti.
-export CFLAGS="$CFLAGS $DISABLE -I$SWIFTSHADER_INCLUDE_PATH -DGR_EGL_TRY_GLES3_THEN_GLES2 -fno-sanitize=vptr"
-export CXXFLAGS="$CXXFLAGS $DISABLE -I$SWIFTSHADER_INCLUDE_PATH -DGR_EGL_TRY_GLES3_THEN_GLES2 -fno-sanitize=vptr "-DIS_FUZZING_WITH_LIBFUZZER""
-export LDFLAGS="$LIB_FUZZING_ENGINE $CXXFLAGS -L$SWIFTSHADER_LIB_PATH"
+export CFLAGS="$CFLAGS $DISABLE \
+ -fno-sanitize=vptr -DSK_BUILD_FOR_LIBFUZZER -DSK_BUILD_FOR_FUZZER"
+export CXXFLAGS="$CXXFLAGS $DISABLE \
+ -fno-sanitize=vptr -DSK_BUILD_FOR_LIBFUZZER -D SK_BUILD_FOR_FUZZER"
+export LDFLAGS="$LIB_FUZZING_ENGINE $CXXFLAGS -fuse-ld=lld"
 
 # This splits a space separated list into a quoted, comma separated list for gn.
 export CFLAGS_ARR=`echo $CFLAGS | sed -e "s/\s/\",\"/g"`
 export CXXFLAGS_ARR=`echo $CXXFLAGS | sed -e "s/\s/\",\"/g"`
 export LDFLAGS_ARR=`echo $LDFLAGS | sed -e "s/\s/\",\"/g"`
 
-# Even though GPU is "enabled" for all these builds, none really
-# uses the gpu except for api_mock_gpu_canvas
+# Avoid OOMs on the CI due to lower memory constraints
+LIMITED_LINK_POOL="link_pool_depth=1"
 
-$SRC/depot_tools/gn gen out/Fuzz\
+SKIA_ARGS="skia_build_fuzzers=true
+           skia_enable_fontmgr_custom_directory=false
+           skia_enable_fontmgr_custom_embedded=false
+           skia_enable_fontmgr_custom_empty=true
+           skia_enable_ganesh=true
+           skia_enable_graphite=true
+           skia_enable_skottie=true
+           skia_enable_precompile=true
+           skia_use_vulkan=false
+           skia_use_egl=false
+           skia_use_gl=false
+           skia_use_fontconfig=false
+           skia_use_freetype=true
+           skia_use_system_freetype2=false
+           skia_use_wuffs=true
+           skia_use_partition_alloc=false
+           skia_provide_default_fuzz_engine=false"
+
+RUST_PNG_ARGS=""
+RUST_FUZZ_TARGETS=""
+# Skia builds the Rust PNG codec with its hermetic Bazel toolchain rather than
+# OSS-Fuzz's clang, so skip it under MSan to avoid uninitialized-memory false
+# positives. We build with for_android=false in out/Fuzz (which covers APNG)
+# and for_android=true in out/FuzzDebug (which covers Android-specific paths
+# like LimitBufReader, unknown chunks, gainmaps, and sBIT).
+if [ "$SANITIZER" != "memory" ]; then
+  RUST_PNG_ARGS="skia_use_rust_png_decode=true skia_use_rust_png_encode=true"
+  RUST_FUZZ_TARGETS="png_rust_decoder png_rust_encoder"
+  # Older Bazelisk versions only find .bazelversion via WORKSPACE.bazel.
+  export USE_BAZEL_VERSION="$(cat $SRC/skia/.bazelversion)"
+
+  if [ "$FUZZING_ENGINE" = "libfuzzer" ] && [ "$SANITIZER" != "coverage" ] \
+      && [ "$SANITIZER" != "introspector" ]; then
+    # Pass SanitizerCoverage flags to rustc via bazel/user/buildrc (which Skia's
+    # .bazelrc imports) so libFuzzer gets coverage feedback from the Rust crates.
+    cat > $SRC/skia/bazel/user/buildrc <<'EOF'
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cpasses=sancov-module
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cllvm-args=-sanitizer-coverage-level=3
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cllvm-args=-sanitizer-coverage-inline-8bit-counters
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cllvm-args=-sanitizer-coverage-pc-table
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cllvm-args=-sanitizer-coverage-trace-compares
+build --@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes
+EOF
+  else
+    rm -f $SRC/skia/bazel/user/buildrc
+  fi
+fi
+
+# Even though GPU is "enabled" for all these builds, none really
+# uses the gpu except for api_mock_gpu_canvas.
+$SRC/skia/bin/gn gen out/Fuzz\
     --args='cc="'$CC'"
       cxx="'$CXX'"
-      link_pool_depth=1
+      '"$LIMITED_LINK_POOL"'
+      '"${SKIA_ARGS[*]}"'
+      '"$RUST_PNG_ARGS"'
+      skia_use_rust_png_for_android=false
       is_debug=false
       extra_cflags_c=["'"$CFLAGS_ARR"'"]
       extra_cflags_cc=["'"$CXXFLAGS_ARR"'"]
-      extra_ldflags=["'"$LDFLAGS_ARR"'"]
-      skia_enable_fontmgr_custom_directory=false
-      skia_enable_fontmgr_custom_embedded=false
-      skia_enable_fontmgr_custom_empty=true
-      skia_enable_gpu=true
-      skia_enable_skottie=true
-      skia_use_egl=true
-      skia_use_fontconfig=false
-      skia_use_freetype=true
-      skia_use_system_freetype2=false
-      skia_use_wuffs=true'
+      extra_ldflags=["'"$LDFLAGS_ARR"'"]'
 
-$SRC/depot_tools/gn gen out/Fuzz_mem_constraints\
+$SRC/skia/third_party/ninja/ninja -C out/Fuzz \
+  android_codec \
+  animated_image_decode \
+  api_create_ddl \
+  api_ddl_threading \
+  api_draw_functions \
+  api_gradients \
+  api_image_filter \
+  api_mock_gpu_canvas \
+  api_null_canvas \
+  api_path_measure \
+  api_pathop \
+  api_polyutils \
+  api_precompile \
+  api_raster_n32_canvas \
+  api_regionop \
+  api_skparagraph \
+  api_svg_canvas \
+  api_triangulation \
+  colrv1 \
+  image_decode \
+  image_decode_incremental \
+  image_filter_deserialize \
+  jpeg_encoder \
+  path_deserialize \
+  png_encoder \
+  region_set_path \
+  skdescriptor_deserialize \
+  skjson \
+  skottie_json \
+  skp \
+  svg_dom \
+  textblob_deserialize \
+  webp_encoder \
+  $RUST_FUZZ_TARGETS
+
+# Some fuzz targets benefit from assertions so we enable SK_DEBUG to allow SkASSERT
+# and SkDEBUGCODE to run. We still enable optimization (via is_debug=false) because
+# faster code means more fuzz tests and deeper coverage.
+$SRC/skia/bin/gn gen out/FuzzDebug\
     --args='cc="'$CC'"
       cxx="'$CXX'"
-      link_pool_depth=1
+      '"$LIMITED_LINK_POOL"'
+      '"${SKIA_ARGS[*]}"'
+      '"$RUST_PNG_ARGS"'
+      skia_use_rust_png_for_android=true
       is_debug=false
-      extra_cflags_c=["'"$CFLAGS_ARR"'"]
-      extra_cflags_cc=["'"$CXXFLAGS_ARR"'","-DIS_FUZZING"]
-      extra_ldflags=["'"$LDFLAGS_ARR"'"]
-      skia_enable_fontmgr_custom_directory=false
-      skia_enable_fontmgr_custom_embedded=false
-      skia_enable_fontmgr_custom_empty=true
-      skia_enable_gpu=true
-      skia_enable_skottie=true
-      skia_use_egl=true
-      skia_use_fontconfig=false
-      skia_use_freetype=true
-      skia_use_system_freetype2=false
-      skia_use_wuffs=true'
+      extra_cflags_c=["-DSK_DEBUG","'"$CFLAGS_ARR"'"]
+      extra_cflags_cc=["-DSK_DEBUG","'"$CXXFLAGS_ARR"'"]
+      extra_ldflags=["'"$LDFLAGS_ARR"'"]'
 
-$SRC/depot_tools/ninja -C out/Fuzz region_deserialize region_set_path \
-                                   path_deserialize image_decode \
-                                   animated_image_decode api_draw_functions \
-                                   api_gradients api_path_measure png_encoder \
-                                   jpeg_encoder webp_encoder skottie_json \
-                                   textblob_deserialize skjson \
-                                   api_null_canvas api_image_filter api_pathop \
-                                   api_polyutils android_codec image_decode_incremental \
-                                   sksl2glsl sksl2spirv sksl2metal sksl2pipeline \
-                                   skdescriptor_deserialize\
-                                   svg_dom api_svg_canvas skruntimeeffect api_create_ddl \
-                                   skp
-
-$SRC/depot_tools/ninja -C out/Fuzz_mem_constraints image_filter_deserialize \
-                                                   api_raster_n32_canvas \
-                                                   api_mock_gpu_canvas
+$SRC/skia/third_party/ninja/ninja -C out/FuzzDebug \
+  api_grshape \
+  cubic_roots \
+  hdr_agtm \
+  parse_path \
+  quad_roots \
+  region_deserialize \
+  skmeshspecification \
+  skruntimeblender \
+  skruntimecolorfilter \
+  skruntimeeffect \
+  sksl2glsl \
+  sksl2metal \
+  sksl2pipeline \
+  sksl2spirv \
+  sksl2wgsl \
+  skcolorspace \
+  $RUST_FUZZ_TARGETS
 
 rm -rf $OUT/data
 mkdir $OUT/data
 
-cp out/Fuzz/region_deserialize $OUT/region_deserialize
+mv out/FuzzDebug/region_deserialize $OUT/region_deserialize
+mv ../skia_data/skregion_deserialize_seed_corpus.zip $OUT/region_deserialize_seed_corpus.zip
 
-cp out/Fuzz/region_set_path $OUT/region_set_path
-cp ../skia_data/region_set_path_seed_corpus.zip $OUT/region_set_path_seed_corpus.zip
+mv out/Fuzz/region_set_path $OUT/region_set_path
+mv ../skia_data/region_set_path_seed_corpus.zip $OUT/region_set_path_seed_corpus.zip
 
-cp out/Fuzz/textblob_deserialize $OUT/textblob_deserialize
-cp ../skia_data/textblob_deserialize_seed_corpus.zip $OUT/textblob_deserialize_seed_corpus.zip
+mv out/Fuzz/textblob_deserialize $OUT/textblob_deserialize
+mv ../skia_data/textblob_deserialize_seed_corpus.zip $OUT/textblob_deserialize_seed_corpus.zip
 
-cp out/Fuzz/path_deserialize $OUT/path_deserialize
-cp ../skia_data/path_deserialize_seed_corpus.zip $OUT/path_deserialize_seed_corpus.zip
+mv out/Fuzz/path_deserialize $OUT/path_deserialize
+mv ../skia_data/path_deserialize_seed_corpus.zip $OUT/path_deserialize_seed_corpus.zip
 
-cp out/Fuzz/image_decode $OUT/image_decode
-cp ../skia_data/image_decode_seed_corpus.zip $OUT/image_decode_seed_corpus.zip
-
-cp out/Fuzz/animated_image_decode $OUT/animated_image_decode
-cp ../skia_data/animated_image_decode_seed_corpus.zip $OUT/animated_image_decode_seed_corpus.zip
-
-cp out/Fuzz_mem_constraints/image_filter_deserialize $OUT/image_filter_deserialize
-cp ../skia_data/image_filter_deserialize_seed_corpus.zip $OUT/image_filter_deserialize_seed_corpus.zip
+mv out/Fuzz/animated_image_decode $OUT/animated_image_decode
+mv ../skia_data/animated_image_decode_seed_corpus.zip $OUT/animated_image_decode_seed_corpus.zip
 
 # Only create the width version of image_filter_deserialize if building with
 # libfuzzer, since it depends on a libfuzzer specific flag.
 if [ "$FUZZING_ENGINE" == "libfuzzer" ]
 then
   # Use the same binary as image_filter_deserialize.
-  cp out/Fuzz_mem_constraints/image_filter_deserialize $OUT/image_filter_deserialize_width
-  cp ../skia_data/image_filter_deserialize_width.options $OUT/image_filter_deserialize_width.options
+  cp out/Fuzz/image_filter_deserialize $OUT/image_filter_deserialize_width
+  mv ../skia_data/image_filter_deserialize_width.options $OUT/image_filter_deserialize_width.options
   # Use the same seed corpus as image_filter_deserialize.
   cp ../skia_data/image_filter_deserialize_seed_corpus.zip $OUT/image_filter_deserialize_width_seed_corpus.zip
 fi
 
-cp out/Fuzz/api_draw_functions $OUT/api_draw_functions
-cp ../skia_data/api_draw_functions_seed_corpus.zip $OUT/api_draw_functions_seed_corpus.zip
+mv out/Fuzz/image_filter_deserialize $OUT/image_filter_deserialize
+mv ../skia_data/image_filter_deserialize_seed_corpus.zip $OUT/image_filter_deserialize_seed_corpus.zip
 
-cp out/Fuzz/api_gradients $OUT/api_gradients
-cp ../skia_data/api_gradients_seed_corpus.zip $OUT/api_gradients_seed_corpus.zip
+mv out/Fuzz/api_draw_functions $OUT/api_draw_functions
+mv ../skia_data/api_draw_functions_seed_corpus.zip $OUT/api_draw_functions_seed_corpus.zip
 
-cp out/Fuzz/api_path_measure $OUT/api_path_measure
-cp ../skia_data/api_path_measure_seed_corpus.zip $OUT/api_path_measure_seed_corpus.zip
+mv out/Fuzz/api_gradients $OUT/api_gradients
+mv ../skia_data/api_gradients_seed_corpus.zip $OUT/api_gradients_seed_corpus.zip
 
-cp out/Fuzz/api_pathop $OUT/api_pathop
-cp ../skia_data/api_pathop_seed_corpus.zip $OUT/api_pathop_seed_corpus.zip
+mv out/Fuzz/api_path_measure $OUT/api_path_measure
+mv ../skia_data/api_path_measure_seed_corpus.zip $OUT/api_path_measure_seed_corpus.zip
 
-cp out/Fuzz/png_encoder $OUT/png_encoder
+mv out/Fuzz/api_pathop $OUT/api_pathop
+mv ../skia_data/api_pathop_seed_corpus.zip $OUT/api_pathop_seed_corpus.zip
+
+# These encoders use the same corpus.
+mv out/Fuzz/png_encoder $OUT/png_encoder
 cp ../skia_data/encoder_seed_corpus.zip $OUT/png_encoder_seed_corpus.zip
 
-cp out/Fuzz/jpeg_encoder $OUT/jpeg_encoder
+if [ -n "$RUST_FUZZ_TARGETS" ]; then
+  mv out/Fuzz/png_rust_encoder $OUT/png_rust_encoder
+  mv out/FuzzDebug/png_rust_encoder $OUT/png_rust_encoder_android
+  cp ../skia_data/encoder_seed_corpus.zip $OUT/png_rust_encoder_seed_corpus.zip
+  cp ../skia_data/encoder_seed_corpus.zip $OUT/png_rust_encoder_android_seed_corpus.zip
+
+  # Seed the decoders with Skia's test PNGs (covering APNG, gainmaps, cICP,
+  # nine-patch chunks, etc.). Since the harness reads its options from trailing
+  # bytes, plain PNGs are valid inputs.
+  mv out/Fuzz/png_rust_decoder $OUT/png_rust_decoder
+  mv out/FuzzDebug/png_rust_decoder $OUT/png_rust_decoder_android
+  zip -qj $OUT/png_rust_decoder_seed_corpus.zip $SRC/skia/resources/images/*.png
+  cp $OUT/png_rust_decoder_seed_corpus.zip $OUT/png_rust_decoder_android_seed_corpus.zip
+fi
+
+mv out/Fuzz/jpeg_encoder $OUT/jpeg_encoder
 cp ../skia_data/encoder_seed_corpus.zip $OUT/jpeg_encoder_seed_corpus.zip
 
-cp out/Fuzz/webp_encoder $OUT/webp_encoder
-cp ../skia_data/encoder_seed_corpus.zip $OUT/webp_encoder_seed_corpus.zip
+mv out/Fuzz/webp_encoder $OUT/webp_encoder
+mv ../skia_data/encoder_seed_corpus.zip $OUT/webp_encoder_seed_corpus.zip
 
-cp out/Fuzz/skottie_json $OUT/skottie_json
-cp ../skia_data/skottie_json_seed_corpus.zip $OUT/skottie_json_seed_corpus.zip
+mv out/Fuzz/skottie_json $OUT/skottie_json
+mv ../skia_data/skottie_json_seed_corpus.zip $OUT/skottie_json_seed_corpus.zip
 
-cp out/Fuzz/skjson $OUT/skjson
-cp ../skia_data/json.dict $OUT/skjson.dict
-cp ../skia_data/skjson_seed_corpus.zip $OUT/skjson_seed_corpus.zip
+mv out/Fuzz/skjson $OUT/skjson
+mv ../skia_data/json.dict $OUT/skjson.dict
+mv ../skia_data/skjson_seed_corpus.zip $OUT/skjson_seed_corpus.zip
 
-cp out/Fuzz_mem_constraints/api_mock_gpu_canvas $OUT/api_mock_gpu_canvas
+# These 4 use the same canvas_seed_corpus.
+mv out/Fuzz/api_mock_gpu_canvas $OUT/api_mock_gpu_canvas
 cp ../skia_data/canvas_seed_corpus.zip $OUT/api_mock_gpu_canvas_seed_corpus.zip
 
-cp out/Fuzz_mem_constraints/api_raster_n32_canvas $OUT/api_raster_n32_canvas
+mv out/Fuzz/api_raster_n32_canvas $OUT/api_raster_n32_canvas
 cp ../skia_data/canvas_seed_corpus.zip $OUT/api_raster_n32_canvas_seed_corpus.zip
 
-cp out/Fuzz/api_image_filter $OUT/api_image_filter
-cp ../skia_data/api_image_filter_seed_corpus.zip $OUT/api_image_filter_seed_corpus.zip
-
-cp out/Fuzz/api_null_canvas $OUT/api_null_canvas
-cp ../skia_data/canvas_seed_corpus.zip $OUT/api_null_canvas_seed_corpus.zip
-
-cp out/Fuzz/api_polyutils $OUT/api_polyutils
-cp ../skia_data/api_polyutils_seed_corpus.zip $OUT/api_polyutils_seed_corpus.zip
-
-# These 2 can use the same corpus as the (non animated) image_decode.
-cp out/Fuzz/android_codec $OUT/android_codec
-cp ../skia_data/image_decode_seed_corpus.zip $OUT/android_codec_seed_corpus.zip.
-
-cp out/Fuzz/image_decode_incremental $OUT/image_decode_incremental
-cp ../skia_data/image_decode_seed_corpus.zip $OUT/image_decode_incremental_seed_corpus.zip
-
-cp out/Fuzz/sksl2glsl $OUT/sksl2glsl
-cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2glsl_seed_corpus.zip
-
-cp out/Fuzz/sksl2spirv $OUT/sksl2spirv
-cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2spirv_seed_corpus.zip
-
-cp out/Fuzz/sksl2metal $OUT/sksl2metal
-cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2metal_seed_corpus.zip
-
-cp out/Fuzz/sksl2pipeline $OUT/sksl2pipeline
-cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2pipeline_seed_corpus.zip
-
-# Don't have any examples of an SkDescriptor atm, so some random bytes is all we have.
-cp out/Fuzz/skdescriptor_deserialize $OUT/skdescriptor_deserialize
-cp ../skia_data/api_polyutils_seed_corpus.zip $OUT/skdescriptor_deserialize_seed_corpus.zip
-
-cp out/Fuzz/svg_dom $OUT/svg_dom
-cp ../skia_data/svg_dom_seed_corpus.zip $OUT/svg_dom_seed_corpus.zip
-
-cp out/Fuzz/api_svg_canvas $OUT/api_svg_canvas
+mv out/Fuzz/api_svg_canvas $OUT/api_svg_canvas
 cp ../skia_data/canvas_seed_corpus.zip $OUT/api_svg_canvas_seed_corpus.zip
 
-cp out/Fuzz/skruntimeeffect $OUT/skruntimeeffect
-cp ../skia_data/sksl_with_256_padding_seed_corpus.zip $OUT/skruntimeeffect_seed_corpus.zip
+mv out/Fuzz/api_null_canvas $OUT/api_null_canvas
+mv ../skia_data/canvas_seed_corpus.zip $OUT/api_null_canvas_seed_corpus.zip
 
-cp out/Fuzz/api_create_ddl $OUT/api_create_ddl
+mv out/Fuzz/api_image_filter $OUT/api_image_filter
+mv ../skia_data/api_image_filter_seed_corpus.zip $OUT/api_image_filter_seed_corpus.zip
 
-cp out/Fuzz/skp $OUT/skp
-cp ../skia_data/skp_seed_corpus.zip $OUT/skp_seed_corpus.zip
+mv out/Fuzz/api_polyutils $OUT/api_polyutils
+mv ../skia_data/api_polyutils_seed_corpus.zip $OUT/api_polyutils_seed_corpus.zip
+
+# These decoders use the same corpus.
+mv out/Fuzz/image_decode $OUT/image_decode
+cp ../skia_data/image_decode_seed_corpus.zip $OUT/image_decode_seed_corpus.zip
+
+mv out/Fuzz/android_codec $OUT/android_codec
+cp ../skia_data/image_decode_seed_corpus.zip $OUT/android_codec_seed_corpus.zip
+
+mv out/Fuzz/image_decode_incremental $OUT/image_decode_incremental
+mv ../skia_data/image_decode_seed_corpus.zip $OUT/image_decode_incremental_seed_corpus.zip
+
+# skmeshspecification uses the SkSL dictionary but has its own corpus.
+mv out/FuzzDebug/skmeshspecification $OUT/skmeshspecification
+cp ../skia_data/sksl.dict $OUT/skmeshspecification.dict
+mv ../skia_data/skmeshspecification_seed_corpus.zip $OUT/skmeshspecification_seed_corpus.zip
+
+# All eight SkSL tests share the same sksl_seed_corpus and dictionary.
+mv out/FuzzDebug/sksl2glsl $OUT/sksl2glsl
+cp ../skia_data/sksl.dict $OUT/sksl2glsl.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2glsl_seed_corpus.zip
+
+mv out/FuzzDebug/sksl2metal $OUT/sksl2metal
+cp ../skia_data/sksl.dict $OUT/sksl2metal.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2metal_seed_corpus.zip
+
+mv out/FuzzDebug/sksl2pipeline $OUT/sksl2pipeline
+cp ../skia_data/sksl.dict $OUT/sksl2pipeline.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2pipeline_seed_corpus.zip
+
+mv out/FuzzDebug/sksl2spirv $OUT/sksl2spirv
+cp ../skia_data/sksl.dict $OUT/sksl2spirv.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2spirv_seed_corpus.zip
+
+mv out/FuzzDebug/sksl2wgsl $OUT/sksl2wgsl
+cp ../skia_data/sksl.dict $OUT/sksl2wgsl.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/sksl2wgsl_seed_corpus.zip
+
+mv out/FuzzDebug/skruntimeblender $OUT/skruntimeblender
+cp ../skia_data/sksl.dict $OUT/skruntimeblender.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/skruntimeblender_seed_corpus.zip
+
+mv out/FuzzDebug/skruntimecolorfilter $OUT/skruntimecolorfilter
+cp ../skia_data/sksl.dict $OUT/skruntimecolorfilter.dict
+cp ../skia_data/sksl_seed_corpus.zip $OUT/skruntimecolorfilter_seed_corpus.zip
+
+mv out/FuzzDebug/skruntimeeffect $OUT/skruntimeeffect
+mv ../skia_data/sksl.dict $OUT/skruntimeeffect.dict
+mv ../skia_data/sksl_seed_corpus.zip $OUT/skruntimeeffect_seed_corpus.zip
+
+mv out/FuzzDebug/skcolorspace $OUT/skcolorspace
+mv ../skia_data/skcolorspace_seed_corpus.zip $OUT/skcolorspace_seed_corpus.zip
+
+mv out/FuzzDebug/parse_path $OUT/parse_path
+mv ../skia_data/parse_path_seed_corpus.zip $OUT/parse_path_seed_corpus.zip
+
+# These only take a few floats - no seed corpus necessary
+mv out/FuzzDebug/quad_roots $OUT/quad_roots
+mv out/FuzzDebug/cubic_roots $OUT/cubic_roots
+
+mv out/FuzzDebug/api_grshape $OUT/api_grshape
+mv out/FuzzDebug/hdr_agtm $OUT/hdr_agtm
+
+mv out/Fuzz/skdescriptor_deserialize $OUT/skdescriptor_deserialize
+mv ../skia_data/skdescriptor_deserialize_seed_corpus.zip $OUT/skdescriptor_deserialize_seed_corpus.zip
+
+mv out/Fuzz/svg_dom $OUT/svg_dom
+mv ../skia_data/svg_dom_seed_corpus.zip $OUT/svg_dom_seed_corpus.zip
+
+mv out/Fuzz/api_create_ddl $OUT/api_create_ddl
+
+mv out/Fuzz/api_ddl_threading $OUT/api_ddl_threading
+
+mv out/Fuzz/skp $OUT/skp
+mv ../skia_data/skp_seed_corpus.zip $OUT/skp_seed_corpus.zip
+
+mv out/Fuzz/api_skparagraph $OUT/api_skparagraph
+
+mv out/Fuzz/api_precompile $OUT/api_precompile
+
+mv out/Fuzz/api_regionop $OUT/api_regionop
+
+mv out/Fuzz/api_triangulation $OUT/api_triangulation
+
+mv out/Fuzz/colrv1 $OUT/colrv1
+mv ../skia_data/colrv1_seed_corpus.zip $OUT/colrv1_seed_corpus.zip
+
+# Coverage builds copy $SRC with `cp -rL`, so remove Bazel's symlinks to avoid
+# copying the entire Bazel execroot.
+rm -f bazel-*

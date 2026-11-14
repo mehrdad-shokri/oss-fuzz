@@ -14,7 +14,7 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
@@ -26,7 +26,7 @@ RUN python3 -m pip install numpy
 
 # Due to Bazel bug, need to symlink python3 to python
 # See https://github.com/bazelbuild/bazel/issues/8665
-RUN ln -s /usr/local/bin/python3 /usr/local/bin/python
+RUN ln -sf /usr/local/bin/python3 /usr/local/bin/python
 
 # Install Bazelisk to keep bazel in sync with the version required by TensorFlow
 RUN curl -Lo /usr/bin/bazel \
@@ -34,6 +34,11 @@ RUN curl -Lo /usr/bin/bazel \
         && \
     chmod +x /usr/bin/bazel
 
+ENV JAVA_HOME /usr/lib/jvm/java-15-openjdk-amd64
+# it fails after installing java due to jazzer env variables missing
+RUN install_java.sh || true
+
 RUN git clone --depth 1 https://github.com/tensorflow/tensorflow tensorflow
 WORKDIR $SRC/tensorflow
 COPY build.sh $SRC/
+COPY *.patch $SRC/

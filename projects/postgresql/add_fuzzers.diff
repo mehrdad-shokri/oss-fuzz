@@ -1,38 +1,67 @@
-diff --git a/src/backend/Makefile b/src/backend/Makefile
-index 9706a95848..4312c346a4 100644
---- a/src/backend/Makefile
-+++ b/src/backend/Makefile
-@@ -43,6 +43,8 @@ OBJS = \
- 	$(top_builddir)/src/common/libpgcommon_srv.a \
- 	$(top_builddir)/src/port/libpgport_srv.a
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index b6bdfe2..229c785 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -110,6 +110,10 @@ int			client_connection_check_interval = 0;
+ /* flags for non-system relation kinds to restrict use */
+ int			restrict_nonsystem_relation_kind;
  
-+OBJS_WITHOUT_MAIN = $(filter-out main/objfiles.txt, $(OBJS))
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++bool		fuzzer_first_run = true;
++#endif
 +
- # We put libpgport and libpgcommon into OBJS, so remove it from LIBS; also add
- # libldap and ICU
- LIBS := $(filter-out -lpgport -lpgcommon, $(LIBS)) $(LDAP_LIBS_BE) $(ICU_LIBS)
-@@ -56,7 +58,10 @@ endif
+ /*
+  * Include signal sender PID/UID in the server log when available
+  * (SA_SIGINFO). The caller must supply the already-captured pid and uid
+@@ -495,10 +499,14 @@ ReadCommand(StringInfo inBuf)
+ {
+ 	int			result;
  
- ##########################################################################
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	result = SocketBackend(inBuf);
++#else
+ 	if (whereToSendOutput == DestRemote)
+ 		result = SocketBackend(inBuf);
+ 	else
+ 		result = InteractiveBackend(inBuf);
++#endif
+ 	return result;
+ }
  
--all: submake-libpgport submake-catalog-headers submake-utils-headers postgres $(POSTGRES_IMP)
-+all: submake-libpgport submake-catalog-headers submake-utils-headers postgres fuzzer $(POSTGRES_IMP)
+@@ -4370,6 +4378,11 @@ PostgresMain(const char *dbname, const char *username)
+ 	volatile bool idle_in_transaction_timeout_enabled = false;
+ 	volatile bool idle_session_timeout_enabled = false;
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	if (fuzzer_first_run)
++	{
++#endif							/* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
 +
-+fuzzer: fuzzer/simple_query_fuzzer \
-+	fuzzer/json_parser_fuzzer
+ 	Assert(dbname != NULL);
+ 	Assert(username != NULL);
  
- ifneq ($(PORTNAME), cygwin)
- ifneq ($(PORTNAME), win32)
-@@ -65,6 +70,12 @@ ifneq ($(PORTNAME), aix)
- postgres: $(OBJS)
- 	$(CC) $(CFLAGS) $(call expand_subsys,$^) $(LDFLAGS) $(LDFLAGS_EX) $(export_dynamic) $(LIBS) -o $@
+@@ -4689,6 +4702,11 @@ PostgresMain(const char *dbname, const char *username)
+ 	if (!ignore_till_sync)
+ 		send_ready_for_query = true;	/* initially, or after error */
  
-+fuzzer/json_parser_fuzzer: fuzzer/json_parser_fuzzer.o $(OBJS_WITHOUT_MAIN)
-+	$(CXX) $(CFLAGS) $(call expand_subsys,$^) -o $@ $(LIB_FUZZING_ENGINE)
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	fuzzer_first_run = false;
++	}
++#endif							/* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
 +
-+fuzzer/simple_query_fuzzer: fuzzer/simple_query_fuzzer.o $(OBJS_WITHOUT_MAIN)
-+	$(CXX) $(CFLAGS) $(call expand_subsys,$^) -o $@ $(LIB_FUZZING_ENGINE)
-+
- endif
- endif
- endif
+ 	/*
+ 	 * Non-error queries loop here.
+ 	 */
+diff --git a/src/backend/utils/error/elog.c b/src/backend/utils/error/elog.c
+index b9d2c96..fbf3921 100644
+--- a/src/backend/utils/error/elog.c
++++ b/src/backend/utils/error/elog.c
+@@ -552,7 +552,7 @@ errfinish(const char *filename, int lineno, const char *funcname)
+ 	}
+ 
+ 	/* Emit the message to the right places */
+-	EmitErrorReport();
++	/* EmitErrorReport(); -- disabled for fuzzing */
+ 
+ 	/*
+ 	 * If this is the outermost recursion level, we can clean up by resetting

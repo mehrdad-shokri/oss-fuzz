@@ -21,11 +21,14 @@ mkdir -p $TOR_DEPS
 
 # Build libevent with proper instrumentation.
 cd ${SRC}/libevent
-sh autogen.sh
-./configure --prefix=${TOR_DEPS} --disable-openssl
-make -j$(nproc) clean
-make -j$(nproc) all
-make install
+mkdir build && cd build
+cmake -DEVENT__DISABLE_MBEDTLS=ON \
+      -DEVENT__DISABLE_OPENSSL=ON \
+      -DEVENT__LIBRARY_TYPE=STATIC \
+      -DEVENT__DISABLE_TESTS=ON \
+      -DEVENT__DISABLE_SAMPLES=ON \
+      ../
+make && make install
 
 # Build OpenSSL with proper instrumentation.
 cd ${SRC}/openssl
@@ -36,8 +39,8 @@ then
 fi
 
 ./config no-shared --prefix=${TOR_DEPS} \
-    enable-tls1_3 enable-rc5 enable-md2 enable-ec_nistp_64_gcc_128 enable-ssl3 \
-    enable-ssl3-method enable-nextprotoneg enable-weak-ssl-ciphers $CFLAGS \
+    enable-tls1_3 enable-rc5 enable-md2 enable-ec_nistp_64_gcc_128 \
+    enable-weak-ssl-ciphers $CFLAGS \
     -fno-sanitize=alignment $OPENSSL_CONFIGURE_FLAGS
 
 make -j$(nproc) LDCMD="$CXX $CXXFLAGS"
@@ -63,13 +66,15 @@ export ASAN_OPTIONS=detect_leaks=0
     --with-libevent-dir=${SRC}/deps \
     --with-openssl-dir=${SRC}/deps \
     --with-zlib-dir=${SRC}/deps \
-    --disable-gcc-hardening
+    --disable-gcc-hardening \
+    LDFLAGS="-L${TOR_DEPS}/lib64"
 
 make clean
+make micro-revision.i  # Workaround from https://gitlab.torproject.org/tpo/core/tor/-/issues/29520#note_2749427
 make -j$(nproc) oss-fuzz-fuzzers
 
 TORLIBS="`make show-testing-libs`"
-TORLIBS="$TORLIBS -lm -Wl,-Bstatic -lssl -lcrypto -levent -lz -L${TOR_DEPS}/lib"
+TORLIBS="$TORLIBS -lm -Wl,-Bstatic -lssl -lcrypto -levent -lz -L${TOR_DEPS}/lib -L${TOR_DEPS}/lib64"
 TORLIBS="$TORLIBS -Wl,-Bdynamic"
 
 for fuzzer in src/test/fuzz/*.a; do

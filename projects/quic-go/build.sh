@@ -1,5 +1,6 @@
 #!/bin/bash
-# Copyright 2020 Google Inc.
+#
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,24 +16,6 @@
 #
 ################################################################################
 
-set -ex
+set -euo pipefail
 
-function compile_fuzzer {
-  path=$1
-  function=$2
-  fuzzer=$3
-
-  # Compile and instrument all Go files relevant to this fuzz target.
-  go-fuzz -func $function -o $fuzzer.a $path
-
-  # Link Go code ($fuzzer.a) with fuzzing engine to produce fuzz target binary.
-  $CXX $CXXFLAGS $LIB_FUZZING_ENGINE $fuzzer.a -o $OUT/$fuzzer
-}
-
-# Fuzz qpack
-compile_fuzzer github.com/marten-seemann/qpack/fuzzing Fuzz qpack_fuzzer
-
-# Fuzz quic-go
-compile_fuzzer github.com/lucas-clemente/quic-go/fuzzing/frames Fuzz frame_fuzzer
-compile_fuzzer github.com/lucas-clemente/quic-go/fuzzing/header Fuzz header_fuzzer
-compile_fuzzer github.com/lucas-clemente/quic-go/fuzzing/transportparameters Fuzz transportparameter_fuzzer
+exec bash "$GOPATH/src/github.com/quic-go/quic-go/oss-fuzz.sh" "$@"

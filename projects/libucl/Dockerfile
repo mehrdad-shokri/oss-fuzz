@@ -1,4 +1,4 @@
-# Copyright 2020 Google Inc.
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y make cmake autoconf pkg-config libtool
+RUN apt-get update && apt-get install -y make cmake pkg-config libtool automake texinfo
+RUN cd /tmp && wget http://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz && \
+    tar xzf autoconf-2.71.tar.gz && cd autoconf-2.71 && \
+    ./configure && make && make install && cd / && rm -rf /tmp/autoconf-2.71*
 RUN git clone https://github.com/vstakhov/libucl
 
-WORKDIR $SRC
+WORKDIR $SRC/libucl
 
-COPY build.sh $SRC/
+COPY build.sh run_tests.sh *.options $SRC/

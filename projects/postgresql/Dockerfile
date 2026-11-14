@@ -14,12 +14,16 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 
-RUN apt-get update && apt-get install -y make libreadline-dev zlib1g-dev bison flex
+RUN apt-get update && apt-get install -y make libreadline-dev zlib1g-dev bison\
+    flex pkg-config libicu-dev
 
-RUN git clone git://git.postgresql.org/git/postgresql.git
+RUN git clone https://github.com/postgres/postgres
+RUN zip postgresql_fuzzer_seed_corpus.zip postgres/src/test/regress/sql/*
 
-WORKDIR postgresql
+WORKDIR postgres
+RUN mkdir bld
+
 COPY fuzzer $SRC/fuzzer
-COPY add_fuzzers.diff build.sh $SRC/
+COPY build.sh add_fuzzers.diff main.diff $SRC/

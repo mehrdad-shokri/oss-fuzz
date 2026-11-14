@@ -14,11 +14,11 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 RUN apt-get update
 RUN apt-get install -y build-essential cmake git ninja-build zlib1g-dev
 
-RUN git clone --depth 1 git://github.com/lpereira/lwan
+RUN git clone --depth 1 https://github.com/lpereira/lwan.git
 WORKDIR lwan
 
 COPY build.sh $SRC/

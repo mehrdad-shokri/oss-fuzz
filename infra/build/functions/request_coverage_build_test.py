@@ -1,4 +1,4 @@
-# Copyright 2020 Google Inc.
+# Copyright 2025 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,21 +13,26 @@
 # limitations under the License.
 #
 ################################################################################
-"""Unit tests for Cloud Function that builds coverage reports."""
-import json
-import datetime
+"""Unit tests for Cloud Function request_coverage_build."""
+import base64
 import os
+import sys
 import unittest
 from unittest import mock
 
 from google.cloud import ndb
 
-from datastore_entities import Project
-from build_and_run_coverage import get_build_steps
+# pylint: disable=wrong-import-position
+
+import datastore_entities
+import request_coverage_build
 import test_utils
+import yaml
+
+# pylint: disable=no-member
 
 
-class TestRequestCoverageBuilds(unittest.TestCase):
+class TestRequestCoverageBuild(unittest.TestCase):
   """Unit tests for sync."""
 
   @classmethod
@@ -39,41 +44,54 @@ class TestRequestCoverageBuilds(unittest.TestCase):
 
   def setUp(self):
     test_utils.reset_ds_emulator()
+    self.maxDiff = None
 
-  @mock.patch('build_lib.get_signed_url', return_value='test_url')
-  @mock.patch('build_lib.download_corpora_steps',
-              return_value=[{
-                  'url': 'test_download'
-              }])
-  @mock.patch('datetime.datetime')
-  def test_get_coverage_build_steps(self, mocked_url, mocked_corpora_steps,
-                                    mocked_time):
-    """Test for get_build_steps."""
-    del mocked_url, mocked_corpora_steps, mocked_time
-    datetime.datetime = test_utils.SpoofedDatetime
-    project_yaml_contents = ('language: c++\n'
-                             'sanitizers:\n'
-                             '  - address\n'
-                             'architectures:\n'
-                             '  - x86_64\n')
-    dockerfile_contents = 'test line'
-    image_project = 'oss-fuzz'
-    base_images_project = 'oss-fuzz-base'
-    testcase_path = os.path.join(os.path.dirname(__file__),
-                                 'expected_coverage_build_steps.json')
-    with open(testcase_path) as testcase_file:
-      expected_coverage_build_steps = json.load(testcase_file)
+  @mock.patch('request_build.run_build', return_value={'id': 'mock-build-id'})
+  @mock.patch('build_lib.get_signed_url',
+              return_value='https://mocked-signed-url.com')
+  def test_get_build_steps_with_base_os_version(self, mock_get_signed_url,
+                                                mock_run_build):
+    """Test that get_build_steps uses the base_os_version for coverage builds."""
+    project_name = 'example'
+    base_os_version = 'ubuntu-24-04'
 
-    with ndb.Client().context():
-      Project(name='test-project',
-              project_yaml_contents=project_yaml_contents,
-              dockerfile_contents=dockerfile_contents).put()
+    project_yaml_contents = f"""
+homepage: https://my-api.example.com
+main_repo: https://github.com/example/my-api
+language: c++
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+base_os_version: {base_os_version}
+"""
+    dockerfile_contents = "FROM gcr.io/oss-fuzz-base/base-builder"
 
-    dockerfile_lines = dockerfile_contents.split('\n')
-    build_steps = get_build_steps('test-project', project_yaml_contents,
-                                  dockerfile_lines, image_project,
-                                  base_images_project)
-    self.assertEqual(build_steps, expected_coverage_build_steps)
+    with mock.patch('request_build.get_project_data') as mock_get_project_data:
+      mock_get_project_data.return_value = (
+          yaml.safe_load(project_yaml_contents), dockerfile_contents)
+
+      event = {'data': base64.b64encode(project_name.encode('utf-8'))}
+
+      with mock.patch('google.auth.default', return_value=(None, 'oss-fuzz')):
+        request_coverage_build.request_coverage_build(event, None)
+
+    self.assertTrue(mock_run_build.called)
+    build_steps = mock_run_build.call_args[0][1]
+
+    for inner_list in build_steps:
+      for step in inner_list:
+        if isinstance(
+            step, dict
+        ) and 'name' in step and 'gcr.io/oss-fuzz-base/base-runner' in step[
+            'name']:
+          found_build_check_step = True
+          expected_image = f'gcr.io/oss-fuzz-base/base-runner:{base_os_version}'
+          self.assertEqual(step['name'], expected_image)
+          break
+      if found_build_check_step:
+        break
+    self.assertTrue(found_build_check_step, 'Coverage build step not found.')
 
   @classmethod
   def tearDownClass(cls):

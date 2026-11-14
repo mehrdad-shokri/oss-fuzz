@@ -15,12 +15,18 @@
 #
 ################################################################################
 
-git checkout fuzzer
-./configure --fuzzing --disable-doc --disable-nls --disable-idn
-make fuzz
+./configure --fuzzing --disable-doc --disable-nls
+make fuzz -j$(nproc)
+cp fuzz/address-fuzz $OUT/
+cp fuzz/body-fuzz $OUT/
 
-cd fuzz
-cp address-fuzz $OUT/
-zip -q -r $OUT/address-fuzz_seed_corpus.zip corpus_address
-cp rfc822_headers_dict.txt $OUT/address-fuzz.dict
+cd $SRC/corpus-address
 cp address-fuzz.options $OUT/
+cp address-fuzz.dict $OUT/
+cp body-fuzz.options $OUT/
+cp body-fuzz.dict $OUT/
+
+cd corpus
+zip -q -r $OUT/address-fuzz_seed_corpus.zip .
+zip -q -r $OUT/body-fuzz_seed_corpus.zip .
+

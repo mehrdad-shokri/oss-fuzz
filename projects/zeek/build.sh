@@ -15,15 +15,20 @@
 #
 ################################################################################
 
-CFLAGS="${CFLAGS} -pthread" CXXFLAGS="${CXXFLAGS} -pthread" \
-    ./configure --prefix=$(pwd)/build/install-root \
-                --build-type=debug \
-                --generator=Ninja \
-                --enable-fuzzers \
-                --disable-python \
-                --disable-zeekctl \
-                --disable-auxtools \
-                --disable-broker-tests
+export CFLAGS="${CFLAGS} -pthread"
+export CXXFLAGS="${CXXFLAGS} -pthread -D_GLIBCXX_ASSERTIONS"
+
+# Selected UB checks only for now.
+export ZEEK_TAILORED_UB_CHECKS=1
+
+./configure --prefix=$(pwd)/build/install-root \
+            --build-type=debug \
+            --generator=Ninja \
+            --enable-fuzzers \
+            --disable-python \
+            --disable-zeekctl \
+            --disable-auxtools \
+            --disable-broker-tests
 
 cd build
 ninja install
@@ -56,10 +61,32 @@ for f in ${fuzzers}; do
         done
 
         copy_lib ${f} libpcap
+        copy_lib ${f} libibverbs
+        copy_lib ${f} libdbus
+        copy_lib ${f} libnl-3
+        copy_lib ${f} libnl-route-3
         copy_lib ${f} libssl
         copy_lib ${f} libcrypto
         copy_lib ${f} libz
         copy_lib ${f} libmaxminddb
+
+        # ZeroMQ and dependencies.
+        copy_lib ${f} libzmq
+        copy_lib ${f} libsodium
+        copy_lib ${f} libpgm
+        copy_lib ${f} libnorm
+        copy_lib ${f} libcom_err
+        copy_lib ${f} libkeyutils
+
+        # Make libzmq search for dependencies in $ORIGIN so it
+        # has them available at runtime.
+        patchelf --set-rpath '$ORIGIN' ${OUT}/lib/libzmq.so*
+
+        # Do the same for libpcap and libibverbs. libpcap depends
+        # on the latter and that one depends on libnl-3 and
+        # libnl-route-3.
+        patchelf --set-rpath '$ORIGIN' ${OUT}/lib/libpcap.so*
+        patchelf --set-rpath '$ORIGIN' ${OUT}/lib/libibverbs.so*
     fi
 
     patchelf --set-rpath '$ORIGIN/lib' ${OUT}/${fuzzer_exe}
@@ -68,9 +95,24 @@ for f in ${fuzzers}; do
         cp ../src/fuzzers/${fuzzer_name}.dict ${OUT}/${fuzzer_exe}.dict
     fi
 
-    if [[ -e ../src/fuzzers/${fuzzer_name}-corpus.zip ]]; then
-        cp ../src/fuzzers/${fuzzer_name}-corpus.zip ${OUT}/${fuzzer_exe}_seed_corpus.zip
+    if [[ -e ../src/fuzzers/corpora/${fuzzer_name}-corpus.zip ]]; then
+        cp ../src/fuzzers/corpora/${fuzzer_name}-corpus.zip ${OUT}/${fuzzer_exe}_seed_corpus.zip
     fi
 
     fuzzer_count=$((fuzzer_count + 1))
 done
+
+if [ "${SANITIZER}" = "coverage" ]; then
+  # Normally, base-builder/compile copies sources for use in coverage reports,
+  # but its use of `cp -rL` omits the "zeek -> ." symlink used by #includes,
+  # causing the coverage build to fail.
+  mkdir -p $OUT/$(basename $SRC)
+  cp -r $SRC/zeek $OUT/$(basename $SRC)/zeek
+
+  # Replace the 3rdpary/ghc symlink in the ./build directory with the
+  # actual contents. The symlink otherwise points into the /src directory.
+  if [ -L ${OUT}/$(basename $SRC)/zeek/build/zeek/3rdparty/ghc ]; then
+    rm ${OUT}/$(basename $SRC)/zeek/build/zeek/3rdparty/ghc
+    cp -r $SRC/zeek/auxil/filesystem/include/ghc ${OUT}/$(basename $SRC)/zeek/build/zeek/3rdparty/
+  fi
+fi

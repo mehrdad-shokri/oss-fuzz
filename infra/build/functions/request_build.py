@@ -15,16 +15,13 @@
 ################################################################################
 """Cloud function to request builds."""
 import base64
-import logging
 
 import google.auth
-from googleapiclient.discovery import build
 from google.cloud import ndb
+import yaml
 
-import build_lib
 import build_project
-from datastore_entities import BuildsHistory
-from datastore_entities import Project
+import datastore_entities
 
 BASE_PROJECT = 'oss-fuzz-base'
 MAX_BUILD_HISTORY_LENGTH = 64
@@ -33,14 +30,16 @@ QUEUE_TTL_SECONDS = 60 * 60 * 24  # 24 hours.
 
 def update_build_history(project_name, build_id, build_tag):
   """Update build history of project."""
-  project_key = ndb.Key(BuildsHistory, project_name + '-' + build_tag)
+  project_key = ndb.Key(datastore_entities.BuildsHistory,
+                        project_name + '-' + build_tag)
   project = project_key.get()
 
   if not project:
-    project = BuildsHistory(id=project_name + '-' + build_tag,
-                            build_tag=build_tag,
-                            project=project_name,
-                            build_ids=[])
+    project = datastore_entities.BuildsHistory(id=project_name + '-' +
+                                               build_tag,
+                                               build_tag=build_tag,
+                                               project=project_name,
+                                               build_ids=[])
 
   if len(project.build_ids) >= MAX_BUILD_HISTORY_LENGTH:
     project.build_ids.pop(0)
@@ -51,50 +50,60 @@ def update_build_history(project_name, build_id, build_tag):
 
 def get_project_data(project_name):
   """Retrieve project metadata from datastore."""
-  query = Project.query(Project.name == project_name)
+  query = datastore_entities.Project.query(
+      datastore_entities.Project.name == project_name)
   project = query.get()
   if not project:
     raise RuntimeError(
-        'Project {0} not available in cloud datastore'.format(project_name))
-  project_yaml_contents = project.project_yaml_contents
-  dockerfile_lines = project.dockerfile_contents.split('\n')
+        f'Project {project_name} not available in cloud datastore')
 
-  return (project_yaml_contents, dockerfile_lines)
+  project_yaml = yaml.safe_load(project.project_yaml_contents)
+  return project_yaml, project.dockerfile_contents
 
 
-def get_build_steps(project_name, image_project, base_images_project):
+def get_empty_config():
+  """Returns an empty build config."""
+  return build_project.Config()
+
+
+def get_build_steps(project_name, timestamp=None):
   """Retrieve build steps."""
-  project_yaml_contents, dockerfile_lines = get_project_data(project_name)
-  return build_project.get_build_steps(project_name, project_yaml_contents,
-                                       dockerfile_lines, image_project,
-                                       base_images_project)
+  project_yaml, dockerfile_lines = get_project_data(project_name)
+  build_config = build_project.Config(
+      build_type=build_project.FUZZING_BUILD_TYPE,
+      base_image_tag=project_yaml.get('base_os_version', None))
+
+  return build_project.get_build_steps(project_name,
+                                       project_yaml,
+                                       dockerfile_lines,
+                                       build_config,
+                                       timestamp=timestamp)
 
 
-# pylint: disable=no-member
-def run_build(project_name, image_project, build_steps, credentials, tag):
-  """Execute build on cloud build."""
-  build_body = {
-      'steps': build_steps,
-      'timeout': str(build_lib.BUILD_TIMEOUT) + 's',
-      'options': {
-          'machineType': 'N1_HIGHCPU_32'
-      },
-      'logsBucket': build_project.GCB_LOGS_BUCKET,
-      'tags': [project_name + '-' + tag,],
-      'queueTtl': str(QUEUE_TTL_SECONDS) + 's',
-  }
+def get_indexer_build_steps(project_name, timestamp=None):
+  """Retrieve build steps."""
+  project_yaml, dockerfile_lines = get_project_data(project_name)
+  build_config = build_project.Config(
+      build_type=build_project.INDEXER_BUILD_TYPE)
+  return build_project.get_indexer_build_steps(project_name,
+                                               project_yaml,
+                                               dockerfile_lines,
+                                               build_config,
+                                               timestamp=timestamp)
 
-  cloudbuild = build('cloudbuild',
-                     'v1',
-                     credentials=credentials,
-                     cache_discovery=False)
-  build_info = cloudbuild.projects().builds().create(projectId=image_project,
-                                                     body=build_body).execute()
-  build_id = build_info['metadata']['build']['id']
 
-  update_build_history(project_name, build_id, tag)
-  logging.info('Build ID: %s', build_id)
-  logging.info('Logs: %s', build_project.get_logs_url(build_id, image_project))
+def run_build(oss_fuzz_project,
+              build_steps,
+              credentials,
+              build_type,
+              cloud_project,
+              update_history=True):
+  """Execute build on cloud build. Wrapper around build_project.py that also
+  updates the db."""
+  build = build_project.run_build(oss_fuzz_project, build_steps, credentials,
+                                  build_type, cloud_project)
+  if update_history:
+    update_build_history(oss_fuzz_project, build['id'], build_type)
 
 
 # pylint: disable=no-member
@@ -106,10 +115,28 @@ def request_build(event, context):
   else:
     raise RuntimeError('Project name missing from payload')
 
+  timestamp = build_project.get_datetime_now()
   with ndb.Client().context():
-    credentials, image_project = google.auth.default()
-    build_steps = get_build_steps(project_name, image_project, BASE_PROJECT)
+    credentials, cloud_project = google.auth.default()
+    build_steps = get_build_steps(project_name, timestamp)
     if not build_steps:
       return
-    run_build(project_name, image_project, build_steps, credentials,
-              build_project.FUZZING_BUILD_TAG)
+    run_build(
+        project_name,
+        build_steps,
+        credentials,
+        build_project.FUZZING_BUILD_TYPE,
+        cloud_project=cloud_project,
+    )
+
+    indexer_build_steps = get_indexer_build_steps(project_name, timestamp)
+    if not indexer_build_steps:
+      return
+    run_build(
+        project_name,
+        indexer_build_steps,
+        credentials,
+        build_project.INDEXER_BUILD_TYPE,
+        cloud_project=cloud_project,
+        update_history=False,
+    )

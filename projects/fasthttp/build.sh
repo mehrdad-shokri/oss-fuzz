@@ -15,18 +15,16 @@
 #
 ################################################################################
 
-function compile_fuzzer {
-  path=$1
-  function=$2
-  fuzzer=$3
-
-  go-fuzz -func $function -o $fuzzer.a $path
-
-  $CXX $CXXFLAGS $LIB_FUZZING_ENGINE $fuzzer.a -o $OUT/$fuzzer
-}
-
-
-ls $GOPATH/src/github.com/valyala/fasthttp/fuzzit | while read target
-do
-    compile_fuzzer github.com/valyala/fasthttp/fuzzit/$target Fuzz fuzz_$target
-done
+rm lbclient_example_test.go
+rm client_example_test.go
+rm requestctx_setbodystreamwriter_example_test.go
+rm fs_handler_example_test.go
+rm server_example_test.go
+rm fs_example_test.go
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzCookieParse fuzzCookieParse
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzVisitHeaderParams fuzzVisitHeaderParams
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzResponseReadLimitBody fuzzResponseReadLimitBody
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzRequestReadLimitBody fuzzRequestReadLimitBody
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzURIUpdateBytes fuzzURIUpdateBytes
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzURIParse fuzzURIParse
+compile_native_go_fuzzer_v2 github.com/valyala/fasthttp FuzzTestHeaderScanner fuzzTestHeaderScanner

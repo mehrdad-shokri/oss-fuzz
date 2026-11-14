@@ -15,28 +15,30 @@
 #
 ################################################################################
 
-# build the project
-autoreconf -fi
-./configure --disable-shared --enable-static --enable-developer --without-cmocka --without-zlib --disable-linux-caps --prefix="$WORK" --enable-fuzzing=ossfuzz
-(cd libltdl && make -j"$(nproc)" all V=1)
-(cd lib/isc && make -j"$(nproc)" all V=1)
-(cd lib/dns && make -j"$(nproc)" all V=1)
+export CFLAGS="${CFLAGS} -fPIC"
+export CXXFLAGS="${CXXFLAGS} -fPIC"
 
-LIBISC_CFLAGS="-Ilib/isc/unix/include -Ilib/isc/pthreads/include -Ilib/isc/include"
-LIBDNS_CFLAGS="-Ilib/dns/include"
-LIBISC_LIBS="libltdl/.libs/libltdlc.a lib/isc/.libs/libisc.a -Wl,-Bstatic -lcrypto -luv -Wl,-Bdynamic"
-LIBDNS_LIBS="lib/dns/.libs/libdns.a -Wl,-Bstatic -lcrypto -Wl,-Bdynamic"
+# Use the dedicated oss-fuzz fuzzing backend that BIND 9 provides.  It defines
+# FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION (which drops the standalone main()
+# from fuzz/main.c, so there is no duplicate-main conflict with the fuzzing
+# engine) and links whatever engine OSS-Fuzz passes via $LIB_FUZZING_ENGINE.
+# Building everything statically yields self-contained fuzzer binaries.
+meson setup build \
+  -Dfuzzing=enabled \
+  -Dfuzzing-backend=oss-fuzz \
+  -Doss-fuzz-args="$LIB_FUZZING_ENGINE" \
+  -Db_lundef=false \
+  -Dcmocka=enabled \
+  -Dc_link_args="$CFLAGS" -Dcpp_link_args="$CXXFLAGS" \
+  -Dc_args="$CFLAGS" -Dcpp_args="$CXXFLAGS" \
+  -Ddefault_library=static -Dprefer_static=true \
+  -Db_lto=false \
+  -Dnamed-lto=disabled
+meson compile -C build fuzz_dns_master_load fuzz_dns_message_checksig fuzz_dns_message_parse fuzz_dns_name_fromtext_target fuzz_dns_name_fromwire fuzz_dns_qp fuzz_dns_qpkey_name fuzz_dns_rdata_fromtext fuzz_dns_rdata_fromwire_text fuzz_isc_lex_getmastertoken fuzz_isc_lex_gettoken --verbose
 
-for fuzzer in fuzz/*.c; do
-    output=$(basename "${fuzzer%.c}")
-    [ "$output" = "main" ] && continue
-    # We need to try little bit harder to link everything statically
-    (cd fuzz && make -j"$(nproc)" "${output}.o" V=1)
-    ${CXX} ${CXXFLAGS} \
-	   -o "${OUT}/${output}_fuzzer" \
-	   "fuzz/${output}.o" \
-	   -include config.h \
-	   $LIBISC_CFLAGS $LIBDNS_CFLAGS \
-	   $LIBDNS_LIBS $LIBISC_LIBS $LIB_FUZZING_ENGINE
-    zip -j "${OUT}/${output}_seed_corpus.zip" "fuzz/${output}.in/"*
+for fuzzname in fuzz_dns_master_load fuzz_dns_message_checksig fuzz_dns_message_parse fuzz_dns_name_fromtext_target fuzz_dns_name_fromwire fuzz_dns_qp fuzz_dns_qpkey_name fuzz_dns_rdata_fromtext fuzz_dns_rdata_fromwire_text fuzz_isc_lex_getmastertoken fuzz_isc_lex_gettoken; do
+  fuzzer_basename="${fuzzname:5}"
+  fuzzer_name="${fuzzname:5}_fuzzer"
+  cp build/${fuzzname} $OUT/${fuzzer_name}
+  zip -j "${OUT}/${fuzzer_name}_seed_corpus.zip" ./fuzz/${fuzzer_basename}.in/* || true
 done

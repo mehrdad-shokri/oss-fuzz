@@ -14,9 +14,15 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder-go
 
-RUN go get -u -d github.com/google/go-attestation/...
+RUN git clone --depth 1 https://github.com/google/go-attestation
+RUN wget https://go.dev/dl/go1.24.6.linux-amd64.tar.gz \
+    && mkdir temp-go \
+    && rm -rf /root/.go/* \
+    && tar -C temp-go/ -xzf go1.24.6.linux-amd64.tar.gz \
+    && mv temp-go/go/* /root/.go/ \
+    && rm -rf temp-go go1.24.6.linux-amd64.tar.gz
 
 WORKDIR go-attestation
 COPY build.sh $SRC/

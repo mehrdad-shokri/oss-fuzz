@@ -1,20 +1,37 @@
 name: Presubmit checks
-on: [pull_request]
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+    - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    permissions:
+      actions: write
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v2
-      - run: |  # Needed for git diff to work.
-          git fetch origin master --depth 1
+
+      - uses: actions/checkout@v6
+        with:  # Needed for git diff to work. (get_changed_files)
+          fetch-depth: 0
+      - run: |
           git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/master
 
       - name: Setup python environment
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v6
         with:
-          python-version: 3.8
+          python-version: 3.11
+          cache: pip
+          cache-dependency-path: |
+            infra/ci/requirements.txt
+            infra/build/functions/requirements.txt
 
       - name: Install dependencies
         run: |

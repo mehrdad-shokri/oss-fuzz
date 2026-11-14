@@ -11,113 +11,102 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+///////////////////////////////////////////////////////////////////////////////
 
 #include "postgres.h"
-#include "parser/gramparse.h"
-#include "parser/parser.h"
-#include "parser/analyze.h"
-#include "utils/memutils.h"
-#include "utils/memdebug.h"
-#include "rewrite/rewriteHandler.h"
+
+#include "access/xlog.h"
+#include "access/xact.h"
+#include "common/username.h"
+#include "executor/spi.h"
+#include "jit/jit.h"
+#include "libpq/libpq.h"
+#include "libpq/pqsignal.h"
+#include "miscadmin.h"
 #include "optimizer/optimizer.h"
+#include "parser/analyze.h"
+#include "parser/parser.h"
+#include "storage/proc.h"
+#include "tcop/tcopprot.h"
+#include "utils/datetime.h"
+#include "utils/memutils.h"
+#include "utils/portal.h"
 #include "utils/snapmgr.h"
-#include "nodes/params.h"
-#include "nodes/plannodes.h"
-#include "nodes/pg_list.h"
+#include "utils/timeout.h"
 
-const char *progname = "progname";
+static void exec_simple_query(const char *query_string) {
+  MemoryContext oldcontext;
+  List *parsetree_list;
+  ListCell *parsetree_item;
 
-List *plan_queries(List *querytrees, const char *query_string, int cursorOptions,
-                 ParamListInfo boundParams) {
-     List       *stmt_list = NIL;
-     ListCell   *query_list;
- 
-     foreach(query_list, querytrees) {
-         Query      *query = lfirst_node(Query, query_list);
-         PlannedStmt *stmt;
+  oldcontext = MemoryContextSwitchTo(MessageContext);
+  parsetree_list = raw_parser(query_string, RAW_PARSE_TYPE_NAME);
+  MemoryContextSwitchTo(oldcontext);
 
-		 if (query->commandType == CMD_UTILITY) {
-             stmt = makeNode(PlannedStmt);
-             stmt->commandType = CMD_UTILITY;
-             stmt->canSetTag = query->canSetTag;
-             stmt->utilityStmt = query->utilityStmt;
-             stmt->stmt_location = query->stmt_location;
-             stmt->stmt_len = query->stmt_len;
-         } else {
-			 stmt = planner(query, query_string, cursorOptions,
-							boundParams);
-		 }
- 
-		 stmt_list = lappend(stmt_list, stmt);
-     }
- 
-     return stmt_list;
- }
+  foreach (parsetree_item, parsetree_list) {
+    RawStmt *parsetree = lfirst_node(RawStmt, parsetree_item);
+    MemoryContext per_parsetree_context = NULL;
+    List *querytree_list;
 
+    if (lnext(parsetree_list, parsetree_item) != NULL) {
+      per_parsetree_context =
+          AllocSetContextCreate(MessageContext, "per-parsetree message context", ALLOCSET_DEFAULT_SIZES);
+      oldcontext = MemoryContextSwitchTo(per_parsetree_context);
+    } else {
+      oldcontext = MemoryContextSwitchTo(MessageContext);
+    }
 
-/*
-** Main entry point.  The fuzzer invokes this function with each
-** fuzzed input.
-*/
-int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-	char* query_string;
-	sigjmp_buf local_sigjmp_buf;
-	List       *parsetree_list;
-	ListCell   *parsetree_item;
+    querytree_list = pg_analyze_and_rewrite_fixedparams(parsetree, query_string, NULL, 0, NULL);
+    pg_plan_queries(querytree_list, query_string, CURSOR_OPT_PARALLEL_OK, NULL);
 
-   	MemoryContextInit();
- 	query_string = (char*) calloc( (size+1), sizeof(char) );
-	memcpy(query_string, data, size);
-	MessageContext = AllocSetContextCreate(TopMemoryContext,
-                                            "MessageContext",
-                                            ALLOCSET_DEFAULT_SIZES);
+    if (per_parsetree_context) {
+      MemoryContextDelete(per_parsetree_context);
+    } else {
+      MemoryContextSwitchTo(oldcontext);
+    }
+  }
+}
 
-	if(!sigsetjmp(local_sigjmp_buf,0)){
-		MemoryContext oldcontext;
+int LLVMFuzzerInitialize(int *argc, char ***argv) {
+  MemoryContextInit();
+  InitializeGUCOptions();
+  InitializeMaxBackends();
 
-		error_context_stack = NULL;
-		PG_exception_stack = &local_sigjmp_buf;
+  MessageContext = AllocSetContextCreate(TopMemoryContext,
+                                         "MessageContext",
+                                         ALLOCSET_DEFAULT_SIZES);
+  return 0;
+}
 
-		oldcontext = MemoryContextSwitchTo(MessageContext);
-		parsetree_list = raw_parser(query_string);
-		MemoryContextSwitchTo(oldcontext);
-		
-		foreach(parsetree_item, parsetree_list) {
-			RawStmt    *parsetree = lfirst_node(RawStmt, parsetree_item);
-			MemoryContext per_parsetree_context = NULL;
-			List       *querytree_list;
-			Query *query;
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+  if (size == 0)
+    return 0;
 
-			if (analyze_requires_snapshot(parsetree)){
-				PushActiveSnapshot(GetTransactionSnapshot());
-			}
-			if (lnext(parsetree_list, parsetree_item) != NULL){
-				per_parsetree_context =
-					AllocSetContextCreate(MessageContext,
-										  "per-parsetree message context",
-										  ALLOCSET_DEFAULT_SIZES);
-				MemoryContextSwitchTo(per_parsetree_context);
-			} else {
-				MemoryContextSwitchTo(MessageContext);
-			}
-			query = parse_analyze(parsetree, query_string, NULL, 0, NULL);
-			if (query->commandType == CMD_UTILITY) {
-				querytree_list = list_make1(query);
-			} else {
-				querytree_list = QueryRewrite(query);
-			}
- 			plan_queries(querytree_list, query_string, CURSOR_OPT_PARALLEL_OK, NULL);
- 			if (per_parsetree_context){
-				MemoryContextDelete(per_parsetree_context);
-			}
-		}
-	}
-	
-	free(query_string);
-	FlushErrorState();
-	MemoryContextReset(TopMemoryContext);
-	TopMemoryContext->ident = NULL;
-	TopMemoryContext->methods->delete_context(TopMemoryContext);
-	VALGRIND_DESTROY_MEMPOOL(TopMemoryContext);
-	return 0;
+  sigjmp_buf local_sigjmp_buf;
+  char *query_string = (char *) calloc(size + 1, sizeof(char));
+  memcpy(query_string, data, size);
+
+  if (!sigsetjmp(local_sigjmp_buf, 0)) {
+    PG_exception_stack = &local_sigjmp_buf;
+    error_context_stack = NULL;
+    set_stack_base();
+
+    disable_all_timeouts(false);
+    QueryCancelPending = false;
+    pq_comm_reset();
+    EmitErrorReport();
+    jit_reset_after_error();
+
+    MemoryContextSwitchTo(TopMemoryContext);
+    FlushErrorState();
+    MemoryContextSwitchTo(MessageContext);
+    MemoryContextReset(MessageContext);
+    SetCurrentStatementStartTimestamp();
+
+    exec_simple_query(query_string);
+  }
+
+  free(query_string);
+  return 0;
 }

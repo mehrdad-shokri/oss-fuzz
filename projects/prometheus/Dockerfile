@@ -14,8 +14,15 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
-RUN go get github.com/prometheus/prometheus/cmd/...
+FROM gcr.io/oss-fuzz-base/base-builder-go
+ENV GO111MODULE=on
+RUN git clone https://github.com/prometheus/prometheus $GOPATH/src/github.com/prometheus/prometheus
+RUN wget https://go.dev/dl/go1.24.6.linux-amd64.tar.gz \
+    && mkdir temp-go \
+    && rm -rf /root/.go/* \
+    && tar -C temp-go/ -xzf go1.24.6.linux-amd64.tar.gz \
+    && mv temp-go/go/* /root/.go/ \
+    && rm -rf temp-go go1.24.6.linux-amd64.tar.gz
 COPY build.sh $SRC/
-RUN mkdir $SRC/prometheus/
-WORKDIR $SRC/prometheus/
+# Required to avoid 'working directory is not part of a module' error.
+WORKDIR $GOPATH/src/github.com/prometheus/prometheus

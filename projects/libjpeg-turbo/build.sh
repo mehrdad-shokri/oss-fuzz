@@ -1,5 +1,4 @@
-#!/bin/bash -eu
-# Copyright 2016 Google Inc.
+# Copyright 2022-2023 D. R. Commander
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +14,15 @@
 #
 ################################################################################
 
-cmake . -DCMAKE_INSTALL_PREFIX=$WORK -DENABLE_STATIC:bool=on
-make "-j$(nproc)"
-make install
+set -e
+set -u
 
-$CXX $CXXFLAGS -std=c++11 -I. \
-    $SRC/libjpeg_turbo_fuzzer.cc -o $OUT/libjpeg_turbo_fuzzer \
-    $LIB_FUZZING_ENGINE "$WORK/lib/libturbojpeg.a"
-
-cp $SRC/libjpeg_turbo_fuzzer_seed_corpus.zip $OUT/
+cat fuzz/branches.txt | while read branch; do
+	pushd libjpeg-turbo.$branch
+	if [ "$branch" = "main" ]; then
+		sh fuzz/build.sh
+	else
+		sh fuzz/build.sh _$branch
+	fi
+	popd
+done

@@ -15,43 +15,40 @@
 #
 ################################################################################
 
-cd $WORK/
+#
+# Build the OpenEXR fuzzers, via the "oss_fuzz" CMake target.
+#
+# The "oss_fuzz" target is specially constructed to operate in this
+# env. It queries the environment for the values of
+# LIB_FUZZING_ENGINE, OUT, and CC/CC_FLAGS, and CXX/CXX_FLAGS. The
+# installed fuzzers go in the OUT directory.
+#
 
-CMAKE_SETTINGS=(
-  "-D BUILD_SHARED_LIBS=OFF"         # Build static libraries only
-  "-D PYILMBASE_ENABLE=OFF"          # Don't build Python support
-  "-D BUILD_TESTING=OFF"             # Or tests
-  "-D INSTALL_OPENEXR_EXAMPLES=OFF"  # Or examples
-  "-D OPENEXR_LIB_SUFFIX="           # Don't append the version number to library files
-  "-D ILMBASE_LIB_SUFFIX="
-)
-cmake $SRC/openexr ${CMAKE_SETTINGS[@]}
-make -j$(nproc)
+set -x
 
-ar -qc $WORK/OpenEXR/libOpenexrUtils.a $(find $WORK/ -name "*.o")
+export BUILD_DIR=$WORK/_build.oss-fuzz
 
-INCLUDES=(
-  "-I $SRC"
-  "-I $SRC/openexr/OpenEXR/IlmImf"
-  "-I $SRC/openexr/OpenEXR/exrenvmap"
-  "-I $SRC/openexr/IlmBase/Imath"
-  "-I $SRC/openexr/IlmBase/Iex"
-  "-I $SRC/openexr/IlmBase/Half"
-  "-I $WORK/OpenEXR/config"
-  "-I $WORK/IlmBase/config"
-)
+./src/test/oss-fuzz/oss-fuzz_build.sh
 
-LIBS=(
-  "$WORK/OpenEXR/IlmImf/libIlmImf.a"
-  "$WORK/IlmBase/Iex/libIex.a"
-  "$WORK/IlmBase/Half/libHalf.a"
-  "$WORK/IlmBase/IlmThread/libIlmThread.a"
-  "$WORK/IlmBase/Imath/libImath.a"
-  "$WORK/OpenEXR/libOpenexrUtils.a"
-)
+# Build tests to support replay_tests.sh
+cd $BUILD_DIR
+cmake --build $BUILD_DIR --target OpenEXRTest OpenEXRCoreTest IexTest OpenEXRUtilTest -j$(nproc)
 
-for fuzzer in $SRC/*_fuzzer.cc; do
-  fuzzer_basename=$(basename -s .cc $fuzzer)
-  $CXX $CXXFLAGS -std=c++11 -pthread ${INCLUDES[@]} $fuzzer $LIB_FUZZING_ENGINE ${LIBS[@]} -lz \
-    -o $OUT/$fuzzer_basename
-done
+# Generate structurally valid Zstd-compressed EXR seeds.  The production corpus
+# exercises every classic codec but not Zstd (internal_zstd_delta.c 0%,
+# internal_zstd_shuffle.c 23%, internal_zstd.c 43%), so the Zstd decode path is
+# dark.  These seeds give the file readers a valid Zstd starting point.  They
+# are full .exr files, so wire them into every fuzzer that reads a whole file.
+ZSTD_CORPUS=$WORK/openexr_zstd_seeds
+rm -rf $ZSTD_CORPUS
+mkdir -p $ZSTD_CORPUS
+python3 $SRC/generate_seeds.py $ZSTD_CORPUS
+if [ -n "$(ls -A $ZSTD_CORPUS 2>/dev/null)" ]; then
+    for fuzzer in openexr_exrcorecheck_fuzzer openexr_exrcheck_fuzzer \
+                  openexr_exrgaps_fuzzer openexr_roundtrip_fuzzer; do
+        if [ -f "$OUT/$fuzzer" ]; then
+            rm -f "$OUT/${fuzzer}_seed_corpus.zip"
+            zip --junk-paths --quiet "$OUT/${fuzzer}_seed_corpus.zip" $ZSTD_CORPUS/*
+        fi
+    done
+fi

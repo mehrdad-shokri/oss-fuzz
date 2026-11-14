@@ -14,10 +14,9 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04
 RUN apt-get update && \
     apt-get install -y autoconf automake libtool bison re2c pkg-config
 RUN git clone --depth 1 --branch master https://github.com/php/php-src.git php-src
-RUN git clone https://github.com/kkos/oniguruma.git php-src/oniguruma
 WORKDIR php-src
-COPY build.sh *.options $SRC/
+COPY replay_build.sh build.sh $SRC/

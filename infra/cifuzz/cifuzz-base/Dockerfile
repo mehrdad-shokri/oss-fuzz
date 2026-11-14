@@ -14,24 +14,34 @@
 #
 ################################################################################
 
-FROM ubuntu:16.04
+FROM gcr.io/oss-fuzz-base/base-runner
 
-RUN apt-get update && apt-get install -y git \
-    apt-transport-https \
-    ca-certificates \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    python3
+RUN apt-get update && \
+    apt-get install -y systemd wget gnupg && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    wget -qO- https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu focal stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli
 
-
-RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - && apt-key fingerprint 0EBFCD88
-RUN add-apt-repository \
-   "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-   xenial \
-   stable"
-
-RUN apt-get update && apt-get install docker-ce docker-ce-cli containerd.io -y
-
+ENV PATH=/opt/gcloud/google-cloud-sdk/bin/:$PATH
 ENV OSS_FUZZ_ROOT=/opt/oss-fuzz
+
+# Do this step before copying to make rebuilding faster when developing.
+COPY ./infra/cifuzz/requirements.txt /tmp/requirements.txt
+RUN python3 -m pip install -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
 ADD . ${OSS_FUZZ_ROOT}
+# Don't use the default npm location since jazzer.js can break us.
+# This means javascript needed by cifuzz/clusterfuzzlite must be executed in
+# OSS_FUZZ_ROOT.
+RUN cd ${OSS_FUZZ_ROOT} && npm install ${OSS_FUZZ_ROOT}/infra/cifuzz
+
+
+ENV PYTHONUNBUFFERED=1
+
+# Python file to execute when the docker container starts up.
+# We can't use the env var $OSS_FUZZ_ROOT here. Since it's a constant env var,
+# just expand to '/opt/oss-fuzz'.
+ENTRYPOINT ["python3", "/opt/oss-fuzz/infra/cifuzz/cifuzz_combined_entrypoint.py"]

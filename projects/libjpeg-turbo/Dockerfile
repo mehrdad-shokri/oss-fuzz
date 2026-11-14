@@ -1,4 +1,5 @@
 # Copyright 2016 Google Inc.
+# Copyright 2022-2023 D. R. Commander
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +16,21 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y make autoconf automake libtool nasm curl cmake
-RUN git clone --depth 1 https://github.com/libjpeg-turbo/libjpeg-turbo
+RUN apt-get update && apt-get install -y make yasm cmake
+RUN git clone --depth 1 https://github.com/libjpeg-turbo/fuzz && \
+    cat fuzz/branches.txt | while read branch; do \
+      git clone --depth 1 https://github.com/libjpeg-turbo/libjpeg-turbo -b $branch libjpeg-turbo.$branch; \
+    done
 
-RUN mkdir afl-testcases
-RUN cd afl-testcases/ && curl https://lcamtuf.coredump.cx/afl/demo/afl_testcases.tgz | tar -xz
-RUN zip libjpeg_turbo_fuzzer_seed_corpus.zip afl-testcases/jpeg/full/images/* afl-testcases/jpeg_turbo/full/images/* $SRC/libjpeg-turbo/testimages/*
+RUN git clone --depth 1 https://github.com/libjpeg-turbo/seed-corpora
+RUN cd seed-corpora && zip -r ../decompress_fuzzer_seed_corpus.zip afl-testcases/jpeg* bugs/decompress*
+RUN cat fuzz/branches.txt | while read branch; do \
+      zip -r decompress_fuzzer_seed_corpus.zip libjpeg-turbo.$branch/testimages/*.jpg; \
+    done
+RUN cd seed-corpora && zip -r ../compress_fuzzer_seed_corpus.zip afl-testcases/bmp afl-testcases/gif* afl-testcases/targa bugs/compress*
+RUN cat fuzz/branches.txt | while read branch; do \
+      zip -r compress_fuzzer_seed_corpus.zip libjpeg-turbo.$branch/testimages/*.bmp libjpeg-turbo.$branch/testimages/*.ppm libjpeg-turbo.$branch/testimages/*.pgm; \
+    done
+RUN rm -rf seed-corpora
 
-WORKDIR libjpeg-turbo
-COPY build.sh libjpeg_turbo_fuzzer.cc $SRC/
+COPY build.sh $SRC/

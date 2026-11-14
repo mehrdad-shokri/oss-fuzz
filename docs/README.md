@@ -5,7 +5,8 @@ Use the following instructions to make documentation changes locally.
 ## Prerequisites
 ```bash
 $ sudo apt install ruby bundler
-$ bundle install --path vendor/bundle
+$ bundle config set path 'vendor/bundle'
+$ bundle install
 ```
 
 ## Serving locally
@@ -14,5 +15,5 @@ $ bundle exec jekyll serve
 ```
 
 ## Theme documentation
-We are using the [just the docs](https://pmarsceill.github.io/just-the-docs/)
+We are using the [just the docs](https://just-the-docs.github.io/just-the-docs/)
 theme.

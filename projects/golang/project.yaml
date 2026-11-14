@@ -1,12 +1,14 @@
 homepage: "https://golang.org/"
-primary_contact: "guidovranken@gmail.com"
+main_repo: "https://github.com/golang/go"
+primary_contact: "security@golang.org"
 auto_ccs:
- - "golang-fuzz@googlegroups.com"
- - "mmoroz@chromium.org"
- - "josharian@gmail.com"
+ - "bracewell@google.com"
+ - "dneil@google.com"
+ - "nealpatel@google.com"
+ - "rsc@google.com"
+ - "Adam@adalogics.com"
 language: go
 sanitizers:
  - address
 fuzzing_engines:
  - libfuzzer
-view_restrictions: none

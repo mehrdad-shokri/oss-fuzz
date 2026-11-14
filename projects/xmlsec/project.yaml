@@ -1,3 +1,4 @@
+base_os_version: ubuntu-24-04
 homepage: "https://www.aleksey.com/xmlsec/"
 language: c++
 primary_contact: "aleksey@aleksey.com"
@@ -6,3 +7,10 @@ auto_ccs:
 sanitizers:
   - address
   - undefined
+main_repo: 'https://github.com/lsh123/xmlsec'
+
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer
+

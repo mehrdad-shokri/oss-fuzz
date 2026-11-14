@@ -17,6 +17,7 @@
 
 FROM gcr.io/oss-fuzz-base/base-builder
 
+
 RUN apt-get update && apt-get -y install  \
 	build-essential \
 	openjdk-8-jdk   \
@@ -27,12 +28,14 @@ RUN apt-get update && apt-get -y install  \
     libtool         \
     wget            \
     golang          \
-    python	    \
-    rsync
+    rsync           \
+    python3         \
+    libtinfo5       \
+    libunwind-dev   \
+    libclang-dev
 
-# Install Bazelisk
-RUN wget -O /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v0.0.8/bazelisk-linux-amd64
-RUN chmod +x /usr/local/bin/bazel
+RUN ln -s /usr/lib/x86_64-linux-gnu/libunwind.a /usr/local/lib/libunwind.a && \
+    ln -s /usr/lib/llvm-10/lib/libclang.so /usr/local/lib/libclang.so
 
 RUN git clone https://github.com/envoyproxy/envoy.git
 WORKDIR $SRC/envoy/

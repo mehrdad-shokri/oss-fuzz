@@ -15,7 +15,7 @@
 #
 ################################################################################
 
-echo -n "Precompiling honggfuzz to $PRECOMPILED_DIR..."
+echo "Precompiling honggfuzz"
 export BUILD_OSSFUZZ_STATIC=true
 
 PACKAGES=(
@@ -26,21 +26,21 @@ PACKAGES=(
     zlib1g-dev
     pkg-config)
 
-apt-get install -y ${PACKAGES[@]}
+apt-get update && apt-get install -y ${PACKAGES[@]}
 
 pushd $SRC/honggfuzz > /dev/null
 make clean
 # These CFLAGs match honggfuzz's default, with the exception of -mtune to
 # improve portability and `-D_HF_LINUX_NO_BFD` to remove assembly instructions
 # from the filenames.
-CC=clang CFLAGS="-O3 -funroll-loops -D_HF_LINUX_NO_BFD" make
+sed -i 's/-Werror//g' Makefile
+CC=clang CFLAGS="-O3 -funroll-loops -D_HF_LINUX_NO_BFD -Wno-unterminated-string-initialization -Wno-error" make
 
 # libhfuzz.a will be added by CC/CXX linker directly during linking,
 # but it's defined here to satisfy the build infrastructure
-ar rcs $PRECOMPILED_DIR/honggfuzz.a libhfuzz/*.o libhfcommon/*.o
-cp honggfuzz $PRECOMPILED_DIR/
+ar rcs honggfuzz.a libhfuzz/*.o libhfcommon/*.o
 popd > /dev/null
 
 apt-get remove -y --purge ${PACKAGES[@]}
 apt-get autoremove -y
-echo " done."
+echo "Done."

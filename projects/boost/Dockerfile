@@ -15,9 +15,9 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder
-RUN apt-get update && apt-get install -y g++
+RUN apt-get update && apt-get install -y g++ python
 
 RUN git clone --recursive https://github.com/boostorg/boost.git
 WORKDIR boost
 # Preferably, move boost_regex_fuzzer.cc to the boost repository.
-COPY build.sh *.cc $SRC/
+COPY build.sh *.zip *.cc $SRC/
